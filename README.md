@@ -13,8 +13,8 @@ This project records Spotify playback on Linux and saves each track as an indivi
 ## Installation
 
 ```bash
-git clone https://example.com/spotify-splitter.git
-cd spotify-splitter
+git clone https://github.com/Brownster/spoti2.git
+cd spoti2
 sudo apt install python3-pyaudio
 poetry config virtualenvs.options.system-site-packages true
 poetry install
