@@ -21,7 +21,7 @@ def is_song(track: TrackInfo) -> bool:
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path.home() / "Music" / "SpotifyRips"
+OUTPUT_DIR = Path.home() / "Music"
 
 
 def sanitize(name: str) -> str:
