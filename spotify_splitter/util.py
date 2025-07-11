@@ -3,6 +3,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+import sounddevice as sd
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,7 @@ def get_spotify_stream_info() -> StreamInfo:
             sinks = json.loads(
                 subprocess.check_output(["pactl", "-f", "json", "list", "sinks"])
             )
+            monitor = None
             for s in sinks:
                 if s["index"] == sink:
                     sink_spec = s.get("sample_spec", s.get("sample_specification"))
@@ -77,14 +79,23 @@ def get_spotify_stream_info() -> StreamInfo:
                         name = s.get("name")
                         if name:
                             monitor = f"{name}.monitor"
-                        else:
-                            continue
-                    logger.debug("Found Spotify monitor %s", monitor)
-                    return StreamInfo(monitor, rate, channels)
+                    break
+
             node_name = props.get("node.name")
             if node_name:
-                logger.debug("Found Spotify node %s", node_name)
-                return StreamInfo(node_name, rate, channels)
+                try:
+                    sd.check_input_settings(device=node_name)
+                    logger.debug("Found direct match with node.name: %s", node_name)
+                    return StreamInfo(node_name, rate, channels)
+                except Exception:
+                    logger.debug(
+                        "node.name '%s' is not a valid sounddevice, continuing...",
+                        node_name,
+                    )
+
+            if monitor:
+                logger.debug("Found Spotify monitor %s", monitor)
+                return StreamInfo(monitor, rate, channels)
     raise RuntimeError("Spotify sink not found – is music playing?")
 
 

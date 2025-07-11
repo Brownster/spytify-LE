@@ -25,18 +25,28 @@ class AudioStream:
             self.stream = _open(monitor_name)
         except Exception:
             # ``monitor_name`` may not exactly match a PortAudio device.
+            logger.debug("Exact device name match failed. Searching for a partial match...")
             try:
                 devices = sd.query_devices()
             except Exception:  # pragma: no cover - requires PortAudio
                 raise
+
+            search_term = monitor_name
+            if "alsa_output" in search_term and ".monitor" in search_term:
+                # use the descriptive portion of the monitor name which often
+                # matches what PortAudio reports
+                search_term = search_term.split(".")[1].replace("_", " ")
+
             for idx, dev in enumerate(devices):
                 name = str(dev.get("name", ""))
-                if monitor_name in name.replace(" ", "").replace(",", ""):  # simple substring match
-                    logger.debug("Resolved monitor %s -> device %s (%s)", monitor_name, idx, name)
+                if search_term in name:
+                    logger.debug(
+                        "Resolved monitor %s -> device %s (%s)", monitor_name, idx, name
+                    )
                     self.stream = _open(idx)
                     break
             else:
-                raise
+                raise ValueError(f"Could not find a matching sounddevice for '{monitor_name}'")
 
     def _callback(self, indata, frames, time, status):
         if status:
