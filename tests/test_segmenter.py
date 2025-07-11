@@ -3,6 +3,7 @@ import types
 import importlib
 import numpy as np
 import pytest
+from pydub import AudioSegment
 
 
 def load_segmenter(monkeypatch):
@@ -75,3 +76,38 @@ def test_is_song_new_format(monkeypatch):
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
     song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1)
     assert segmenter.is_song(song)
+
+
+def test_float_export_not_distorted(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1)
+
+    t = np.linspace(0, 1, manager.samplerate, endpoint=False)
+    sine = 0.5 * np.sin(2 * np.pi * 440 * t)
+    frames = np.stack([sine, sine], axis=1).astype("float32")
+
+    manager._export(frames, track)
+
+    exported = tmp_path / "Artist" / "Album" / "01 - Tone.mp3"
+    assert exported.exists()
+
+    ref = (np.clip(frames, -1.0, 1.0) * np.iinfo(np.int16).max).astype(np.int16)
+    ref_seg = AudioSegment(
+        ref.tobytes(),
+        frame_rate=manager.samplerate,
+        sample_width=2,
+        channels=2,
+    )
+    ref_path = tmp_path / "ref.mp3"
+    ref_seg.export(ref_path, format="mp3", bitrate="320k")
+
+    out = AudioSegment.from_file(exported)
+    ref_out = AudioSegment.from_file(ref_path)
+    out_arr = np.array(out.get_array_of_samples())
+    ref_arr = np.array(ref_out.get_array_of_samples())
+    diff = np.mean(np.abs(out_arr - ref_arr))
+    assert diff < 1
