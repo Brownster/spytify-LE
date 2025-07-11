@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "spotify-splitter"
+version = "0.1.0"
+description = "Record Spotify playback and split tracks with metadata"
+authors = ["Example <example@example.com>"]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+pydbus = "*"
+sounddevice = "*"
+numpy = "*"
+pydub = "*"
+mutagen = "*"
+requests = "*"
+typer = "*"
+rich = "*"
+
+[tool.poetry.dev-dependencies]
+pytest = "*"
+
+[tool.poetry.scripts]
+spotify-splitter = "spotify_splitter.main:app"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
