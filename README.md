@@ -7,6 +7,7 @@ This project records Spotify playback on Linux and saves each track as an indivi
 - Linux with PulseAudio or PipeWire
 - A running Spotify client
 - [Poetry](https://python-poetry.org/) installed
+- Python 3.10–3.12 (3.13 is not yet supported)
 
 ## Installation
 
