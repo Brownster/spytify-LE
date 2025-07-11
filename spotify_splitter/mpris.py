@@ -1,7 +1,7 @@
 from gi.repository import GLib
 from pydbus import SessionBus
 from collections import namedtuple
-from typing import Callable
+from typing import Callable, Optional
 import logging
 
 TrackInfo = namedtuple("TrackInfo", "artist title album art_uri id")
@@ -9,11 +9,15 @@ TrackInfo = namedtuple("TrackInfo", "artist title album art_uri id")
 logger = logging.getLogger(__name__)
 
 
-def track_events(on_change: Callable[[TrackInfo], None]) -> None:
+def track_events(
+    on_change: Callable[[TrackInfo], None],
+    on_status: Optional[Callable[[str], None]] = None,
+) -> None:
     """Subscribe to MPRIS track change events from Spotify.
 
-    Calls *on_change* with a :class:`TrackInfo` whenever the currently playing
-    track updates.
+    ``on_change`` is called with a :class:`TrackInfo` whenever the track updates.
+    If provided, ``on_status`` is called with the string ``PlaybackStatus`` when
+    the player status changes.
     """
     bus = SessionBus()
     spotify = bus.get("org.mpris.MediaPlayer2.spotify", "/org/mpris/MediaPlayer2")
@@ -31,6 +35,11 @@ def track_events(on_change: Callable[[TrackInfo], None]) -> None:
             logger.debug("Track changed: %s - %s", track.artist, track.title)
             on_change(track)
 
+        status = changed.get("PlaybackStatus")
+        if status and on_status:
+            logger.debug("Playback status changed: %s", status)
+            on_status(status)
+
     # Emit current metadata before listening for changes so the first track
     # is captured even if playback was already running when the program starts.
     try:
@@ -38,6 +47,12 @@ def track_events(on_change: Callable[[TrackInfo], None]) -> None:
         handler(None, {"Metadata": initial}, None)
     except Exception:
         logger.debug("No initial metadata available")
+
+    if on_status:
+        try:
+            on_status(spotify.PlaybackStatus)
+        except Exception:
+            logger.debug("No initial playback status available")
 
     spotify.onPropertiesChanged = handler
     loop = GLib.MainLoop()

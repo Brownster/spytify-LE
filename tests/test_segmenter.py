@@ -33,3 +33,19 @@ def test_segment_manager_flush(monkeypatch, tmp_path):
     manager.flush()
 
     assert exported and exported[0].title == "Title"
+
+
+def test_pause_resume(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    track = TrackInfo("Artist", "Title", "Album", None, "1")
+    manager.start_track(track)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.pause_recording()
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.resume_recording()
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+
+    assert len(manager.buffer) == 2

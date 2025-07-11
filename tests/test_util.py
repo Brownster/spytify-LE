@@ -1,12 +1,16 @@
 import json
 import subprocess
 import pytest
-from spotify_splitter.util import find_spotify_monitor, _is_spotify
+from spotify_splitter.util import get_spotify_stream_info, _is_spotify, StreamInfo
 
 
-def test_find_spotify_monitor(monkeypatch):
+def test_get_spotify_stream_info(monkeypatch):
     inputs = json.dumps([
-        {"properties": {"application.name": "Spotify"}, "sink": 5}
+        {
+            "properties": {"application.name": "Spotify"},
+            "sink": 5,
+            "sample_spec": {"rate": 48000, "channels": 2},
+        }
     ]).encode()
     sinks = json.dumps([
         {"index": 5, "monitor_source_name": "alsa_output.monitor"}
@@ -18,7 +22,8 @@ def test_find_spotify_monitor(monkeypatch):
         return sinks
 
     monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
-    assert find_spotify_monitor() == "alsa_output.monitor"
+    info = get_spotify_stream_info()
+    assert info == StreamInfo("alsa_output.monitor", 48000, 2)
 
 
 @pytest.mark.parametrize(
