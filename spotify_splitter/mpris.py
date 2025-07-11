@@ -31,6 +31,14 @@ def track_events(on_change: Callable[[TrackInfo], None]) -> None:
             logger.debug("Track changed: %s - %s", track.artist, track.title)
             on_change(track)
 
+    # Emit current metadata before listening for changes so the first track
+    # is captured even if playback was already running when the program starts.
+    try:
+        initial = spotify.Metadata
+        handler(None, {"Metadata": initial}, None)
+    except Exception:
+        logger.debug("No initial metadata available")
+
     spotify.onPropertiesChanged = handler
     loop = GLib.MainLoop()
     logger.debug("Entering GLib main loop for MPRIS events")

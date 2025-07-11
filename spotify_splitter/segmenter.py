@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 OUTPUT_DIR = Path.home() / "Music" / "SpotifyRips"
 
 
+def sanitize(name: str) -> str:
+    """Return a filesystem-safe version of *name*."""
+    return "".join(c for c in name if c not in r'/\\:*?"<>|')
+
+
 class SegmentManager:
     """Buffer audio frames and export them per track."""
 
@@ -48,9 +53,13 @@ class SegmentManager:
         self.buffer.clear()
 
     def _export(self, segment: AudioSegment, t: TrackInfo) -> None:
-        folder = self.output_dir / f"{t.artist} / {t.album}"
+        safe_artist = sanitize(t.artist)
+        safe_album = sanitize(t.album)
+        safe_title = sanitize(t.title)
+
+        folder = self.output_dir / safe_artist / safe_album
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{t.artist} - {t.title}.{self.format}"
+        path = folder / f"{safe_artist} - {safe_title}.{self.format}"
         segment.export(path, format=self.format, bitrate="320k")
         audio = EasyID3(path)
         audio["artist"], audio["title"], audio["album"] = t.artist, t.title, t.album
