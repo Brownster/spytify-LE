@@ -62,13 +62,24 @@ def record(ctx: typer.Context):
 
     try:
         with live:
-            with AudioStream(info.monitor_name, samplerate=info.samplerate, channels=info.channels) as stream:
-                def feeder():
+            # The ``AudioStream`` uses a high priority callback that places
+            # captured frames into an internal queue. A dedicated thread simply
+            # pulls from that queue and hands the data off to the segment
+            # manager. This avoids busy waiting and reduces the chance of
+            # buffer overruns.
+            with AudioStream(
+                info.monitor_name,
+                samplerate=info.samplerate,
+                channels=info.channels,
+            ) as stream:
+
+                def audio_processor():
+                    """Continuously read frames from ``stream`` and buffer them."""
                     while True:
                         frames = stream.read()
                         manager.add_frames(frames)
 
-                threading.Thread(target=feeder, daemon=True).start()
+                threading.Thread(target=audio_processor, daemon=True).start()
 
                 def on_change(track):
                     manager.start_track(track)
