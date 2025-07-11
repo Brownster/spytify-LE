@@ -4,7 +4,7 @@ from collections import namedtuple
 from typing import Callable, Optional
 import logging
 
-TrackInfo = namedtuple("TrackInfo", "artist title album art_uri id")
+TrackInfo = namedtuple("TrackInfo", "artist title album art_uri id track_number")
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ def track_events(
                 album=md.get("xesam:album", "Unknown"),
                 art_uri=md.get("mpris:artUrl"),
                 id=md.get("mpris:trackid"),
+                track_number=md.get("xesam:trackNumber"),
             )
             logger.debug("Track changed: %s - %s", track.artist, track.title)
             on_change(track)
