@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  spotifyd:
+    image: spotifyd/spotifyd:latest
+    container_name: spotifyd
+    network_mode: "host"
+    volumes:
+      - ./spotifyd.conf:/etc/spotifyd.conf
+      - spotifyd-cache:/var/cache/spotifyd
+    restart: unless-stopped
+
+  spotify-splitter:
+    build: .
+    container_name: spotify-splitter
+    network_mode: "host"
+    depends_on:
+      - spotifyd
+    volumes:
+      - ./Music:/root/Music
+    restart: unless-stopped
+
+volumes:
+  spotifyd-cache:

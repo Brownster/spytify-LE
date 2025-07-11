@@ -21,6 +21,17 @@ poetry config virtualenvs.options.system-site-packages true
 poetry install
 ```
 
+### Docker Compose
+
+Alternatively, you can run the project using Docker Compose. Copy `spotifyd.conf`
+and edit it with your Spotify credentials, then start the stack:
+
+```bash
+docker-compose up --build
+```
+
+Recorded tracks will be saved to `./Music` on the host.
+
 ## Features
 
 - Listens for track changes via MPRIS
