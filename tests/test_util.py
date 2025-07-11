@@ -78,6 +78,37 @@ def test_get_spotify_stream_info_node_name(monkeypatch):
     assert info == StreamInfo("spotify", 44100, 2)
 
 
+def test_get_spotify_stream_info_sink_rate(monkeypatch):
+    """Sink sample rate overrides input spec."""
+    inputs = json.dumps(
+        [
+            {
+                "properties": {"application.name": "Spotify"},
+                "sink": 9,
+                "sample_spec": {"rate": 44100, "channels": 2},
+            }
+        ]
+    ).encode()
+    sinks = json.dumps(
+        [
+            {
+                "index": 9,
+                "monitor_source_name": "alsa_output.monitor",
+                "sample_spec": {"rate": 24000, "channels": 2},
+            }
+        ]
+    ).encode()
+
+    def fake_cmd(cmd):
+        if "sink-inputs" in cmd:
+            return inputs
+        return sinks
+
+    monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    info = get_spotify_stream_info()
+    assert info == StreamInfo("alsa_output.monitor", 24000, 2)
+
+
 @pytest.mark.parametrize(
     "key,value",
     [
