@@ -3,6 +3,7 @@ from pydbus import SessionBus
 from collections import namedtuple
 from typing import Callable, Optional
 import logging
+import pprint
 
 TrackInfo = namedtuple("TrackInfo", "artist title album art_uri id track_number")
 
@@ -25,6 +26,7 @@ def track_events(
     def handler(_iface, changed, _invalid):
         md = changed.get("Metadata", {})
         if md:
+            pprint.pprint(md)
             track = TrackInfo(
                 artist=md.get("xesam:artist", ["Unknown"])[0],
                 title=md.get("xesam:title", "Unknown"),
