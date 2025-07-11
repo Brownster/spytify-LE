@@ -1,31 +1,28 @@
-from typer.testing import CliRunner
 import sys
-
-class DummySD:
-    pass
-
-class DummyGI:
-    class repository:
-        class GLib:
-            pass
-
-class DummyDBus:
-    class SessionBus:
-        def get(self, *args, **kwargs):
-            class Dummy:
-                def __setattr__(self, name, value):
-                    pass
-            return Dummy()
-
-sys.modules.setdefault('sounddevice', DummySD())
-sys.modules.setdefault('gi', DummyGI())
-sys.modules.setdefault('gi.repository', DummyGI.repository)
-sys.modules.setdefault('pydbus', DummyDBus())
-from spotify_splitter.main import app
+import types
+from typer.testing import CliRunner
+import pytest
 
 
-def test_cli_help():
+@pytest.fixture(autouse=True)
+def dummy_modules(monkeypatch):
+    # Provide lightweight stand-ins for optional C libraries
+    monkeypatch.setitem(sys.modules, "sounddevice", types.ModuleType("sounddevice"))
+    gi = types.ModuleType("gi")
+    gi.repository = types.SimpleNamespace(GLib=types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "gi", gi)
+    monkeypatch.setitem(sys.modules, "gi.repository", gi.repository)
+    dbus = types.ModuleType("pydbus")
+    dbus.SessionBus = lambda: None
+    monkeypatch.setitem(sys.modules, "pydbus", dbus)
+
+
+def test_cli_help(monkeypatch):
+    monkeypatch.setattr("spotify_splitter.main.track_events", lambda func: None)
+    monkeypatch.setattr("spotify_splitter.main.find_spotify_monitor", lambda: "dummy")
+    from spotify_splitter.main import app
+
     runner = CliRunner()
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["record", "--help"])
     assert result.exit_code == 0
-    assert "record" in result.output
+    assert "Start recording until interrupted" in result.output
