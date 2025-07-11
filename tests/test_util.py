@@ -5,16 +5,18 @@ from spotify_splitter.util import get_spotify_stream_info, _is_spotify, StreamIn
 
 
 def test_get_spotify_stream_info(monkeypatch):
-    inputs = json.dumps([
-        {
-            "properties": {"application.name": "Spotify"},
-            "sink": 5,
-            "sample_spec": {"rate": 48000, "channels": 2},
-        }
-    ]).encode()
-    sinks = json.dumps([
-        {"index": 5, "monitor_source_name": "alsa_output.monitor"}
-    ]).encode()
+    inputs = json.dumps(
+        [
+            {
+                "properties": {"application.name": "Spotify"},
+                "sink": 5,
+                "sample_spec": {"rate": 48000, "channels": 2},
+            }
+        ]
+    ).encode()
+    sinks = json.dumps(
+        [{"index": 5, "monitor_source_name": "alsa_output.monitor"}]
+    ).encode()
 
     def fake_cmd(cmd):
         if "sink-inputs" in cmd:
@@ -24,6 +26,33 @@ def test_get_spotify_stream_info(monkeypatch):
     monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
     info = get_spotify_stream_info()
     assert info == StreamInfo("alsa_output.monitor", 48000, 2)
+
+
+def test_get_spotify_stream_info_new_format(monkeypatch):
+    """Handle newer pactl JSON without monitor_source_name and string spec."""
+    inputs = json.dumps(
+        [
+            {
+                "properties": {"application.name": "Spotify"},
+                "sink": 7,
+                "sample_specification": "s16le 2ch 44100Hz",
+            }
+        ]
+    ).encode()
+    sinks = json.dumps(
+        [{"index": 7, "name": "alsa_output.pci-0000_00_1f.3.analog-stereo"}]
+    ).encode()
+
+    def fake_cmd(cmd):
+        if "sink-inputs" in cmd:
+            return inputs
+        return sinks
+
+    monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    info = get_spotify_stream_info()
+    assert info == StreamInfo(
+        "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor", 44100, 2
+    )
 
 
 @pytest.mark.parametrize(
