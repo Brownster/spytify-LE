@@ -18,7 +18,6 @@ jobs:
     env:
       TAG: v${{ github.event.inputs.version }}
       IMAGE: ghcr.io/${{ github.repository }}
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
