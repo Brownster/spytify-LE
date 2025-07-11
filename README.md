@@ -8,12 +8,15 @@ This project records Spotify playback on Linux and saves each track as an indivi
 - A running Spotify client
 - [Poetry](https://python-poetry.org/) installed
 - Python 3.10–3.12 (3.13 is not yet supported)
+- `python3-pyaudio` installed (system package)
 
 ## Installation
 
 ```bash
 git clone https://example.com/spotify-splitter.git
 cd spotify-splitter
+sudo apt install python3-pyaudio
+poetry config virtualenvs.options.system-site-packages true
 poetry install
 ```
 

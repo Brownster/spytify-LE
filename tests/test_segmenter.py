@@ -8,7 +8,9 @@ import pytest
 def load_segmenter(monkeypatch):
     monkeypatch.setitem(sys.modules, "gi", types.ModuleType("gi"))
     monkeypatch.setitem(sys.modules, "gi.repository", types.SimpleNamespace(GLib=types.SimpleNamespace()))
-    monkeypatch.setitem(sys.modules, "pydbus", types.ModuleType("pydbus"))
+    dummy_dbus = types.ModuleType("pydbus")
+    dummy_dbus.SessionBus = lambda: None
+    monkeypatch.setitem(sys.modules, "pydbus", dummy_dbus)
     module = importlib.import_module("spotify_splitter.segmenter")
     importlib.reload(module)
     return module
@@ -27,7 +29,7 @@ def test_segment_manager_flush(monkeypatch, tmp_path):
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
 
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1")
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1)
     manager.start_track(track)
     manager.add_frames(np.zeros((2, 2), dtype="float32"))
     manager.flush()
@@ -40,7 +42,7 @@ def test_pause_resume(monkeypatch, tmp_path):
     SegmentManager = segmenter.SegmentManager
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1")
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1)
     manager.start_track(track)
     manager.add_frames(np.ones((2, 2), dtype="float32"))
     manager.pause_recording()
@@ -59,7 +61,7 @@ def test_skip_ad(monkeypatch, tmp_path):
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
 
-    ad = TrackInfo("AdArtist", "AdTitle", "AdAlbum", None, "spotify:ad:123")
+    ad = TrackInfo("AdArtist", "AdTitle", "AdAlbum", None, "spotify:ad:123", None)
     manager.start_track(ad)
     manager.add_frames(np.ones((2, 2), dtype="float32"))
     manager.flush()

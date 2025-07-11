@@ -90,10 +90,18 @@ class SegmentManager:
 
         folder = self.output_dir / safe_artist / safe_album
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{safe_artist} - {safe_title}.{self.format}"
+        num_prefix = ""
+        if t.track_number:
+            try:
+                num_prefix = f"{int(t.track_number):02d} - "
+            except Exception:
+                num_prefix = f"{t.track_number} - "
+        path = folder / f"{num_prefix}{safe_title}.{self.format}"
         segment.export(path, format=self.format, bitrate="320k")
         audio = EasyID3(path)
         audio["artist"], audio["title"], audio["album"] = t.artist, t.title, t.album
+        if t.track_number:
+            audio["tracknumber"] = str(t.track_number)
         if t.art_uri:
             try:
                 img = requests.get(t.art_uri).content
