@@ -2,6 +2,9 @@
 
 This project records Spotify playback on Linux and saves each track as an individual audio file with metadata.
 
+<img width="1519" height="346" alt="image" src="https://github.com/user-attachments/assets/54a75624-1a1b-410a-ab3e-e084fdd1cfe7" />
+
+
 ## Prerequisites
 
 - Linux with PulseAudio or PipeWire
