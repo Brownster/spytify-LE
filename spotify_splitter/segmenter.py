@@ -1,7 +1,7 @@
 from pathlib import Path
 from pydub import AudioSegment
 from mutagen.easyid3 import EasyID3
-from mutagen.id3 import APIC
+from mutagen.id3 import APIC, ID3
 import mutagen
 import numpy as np
 import requests
@@ -109,25 +109,30 @@ class SegmentManager:
         path = folder / f"{num_prefix}{safe_title}.{self.format}"
         audio_segment.export(path, format=self.format, bitrate="320k")
 
-        # Load the exported file with mutagen's base interface to gain access
-        # to the underlying ID3 tags for embedding album art.
-        audio = mutagen.File(path, easy=True)
-        if audio is None:
-            logger.warning("Could not load mutagen file to write tags.")
-            return
+        try:
+            tags = EasyID3(path)
+        except Exception:
+            tags = EasyID3()
 
-        audio["artist"], audio["title"], audio["album"] = t.artist, t.title, t.album
+        tags["artist"] = t.artist
+        tags["title"] = t.title
+        tags["album"] = t.album
         if t.track_number:
-            audio["tracknumber"] = str(t.track_number)
+            tags["tracknumber"] = str(t.track_number)
+        tags.save(path)
+
+        try:
+            audio = ID3(path)
+        except Exception as e:
+            logger.warning("Could not load file for tagging: %s", e)
+            return
 
         if t.art_uri:
             try:
                 img = requests.get(t.art_uri).content
-                # ``audio.tags`` is available on the base object and allows
-                # adding complex ID3 frames like APIC.
-                audio.tags.add(APIC(3, "image/jpeg", 3, "Front cover", img))
+                audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
             except Exception as e:
                 logger.warning("Failed to download or embed cover art: %s", e)
 
-        audio.save(v2_version=3)
+        audio.save()
         logger.info("Saved %s", path)
