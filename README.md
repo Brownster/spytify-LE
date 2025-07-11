@@ -45,3 +45,10 @@ poetry run spotify-splitter --output ~/Music/Rips --format flac record
 ```
 
 Use `--help` to view available options.
+
+## Troubleshooting
+
+If you see an error like `ValueError: No input device matching` when starting a
+recording, the monitor name reported by `pactl` might not match the name used by
+PortAudio. The application now attempts a best-effort lookup but you may need to
+ensure the correct audio backend and monitor sources are available.

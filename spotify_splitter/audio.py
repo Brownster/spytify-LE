@@ -11,13 +11,32 @@ class AudioStream:
 
     def __init__(self, monitor_name: str, samplerate: int = 44100, channels: int = 2):
         self.q: Queue[np.ndarray] = Queue(maxsize=20)
-        self.stream = sd.InputStream(
-            device=monitor_name,
-            channels=channels,
-            samplerate=samplerate,
-            dtype="float32",
-            callback=self._callback,
-        )
+
+        def _open(device):
+            return sd.InputStream(
+                device=device,
+                channels=channels,
+                samplerate=samplerate,
+                dtype="float32",
+                callback=self._callback,
+            )
+
+        try:
+            self.stream = _open(monitor_name)
+        except Exception:
+            # ``monitor_name`` may not exactly match a PortAudio device.
+            try:
+                devices = sd.query_devices()
+            except Exception:  # pragma: no cover - requires PortAudio
+                raise
+            for idx, dev in enumerate(devices):
+                name = str(dev.get("name", ""))
+                if monitor_name in name.replace(" ", "").replace(",", ""):  # simple substring match
+                    logger.debug("Resolved monitor %s -> device %s (%s)", monitor_name, idx, name)
+                    self.stream = _open(idx)
+                    break
+            else:
+                raise
 
     def _callback(self, indata, frames, time, status):
         if status:
