@@ -79,16 +79,21 @@ class SegmentManager:
         if not self.current or not self.buffer:
             return
         raw = np.concatenate(self.buffer)
-        segment = AudioSegment(
-            raw.tobytes(),
-            frame_rate=self.samplerate,
-            sample_width=raw.dtype.itemsize,
-            channels=raw.shape[1],
-        )
-        self._export(segment, self.current)
+        self._export(raw, self.current)
         self.buffer.clear()
 
-    def _export(self, segment: AudioSegment, t: TrackInfo) -> None:
+    def _export(self, segment: np.ndarray, t: TrackInfo) -> None:
+        if segment.dtype.kind == "f":
+            segment = np.clip(segment, -1.0, 1.0)
+            segment = (
+                segment * np.iinfo(np.int16).max
+            ).astype(np.int16)
+        audio_segment = AudioSegment(
+            segment.tobytes(),
+            frame_rate=self.samplerate,
+            sample_width=2,
+            channels=segment.shape[1],
+        )
         safe_artist = sanitize(t.artist)
         safe_album = sanitize(t.album)
         safe_title = sanitize(t.title)
@@ -102,7 +107,7 @@ class SegmentManager:
             except Exception:
                 num_prefix = f"{t.track_number} - "
         path = folder / f"{num_prefix}{safe_title}.{self.format}"
-        segment.export(path, format=self.format, bitrate="320k")
+        audio_segment.export(path, format=self.format, bitrate="320k")
 
         # Load the exported file with mutagen's base interface to gain access
         # to the underlying ID3 tags for embedding album art.

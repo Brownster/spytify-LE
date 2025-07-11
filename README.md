@@ -53,3 +53,6 @@ If you see an error like `ValueError: No input device matching` when starting a
 recording, the monitor name reported by `pactl` might not match the name used by
 PortAudio. The application now attempts a best-effort lookup but you may need to
 ensure the correct audio backend and monitor sources are available.
+If saved tracks sound distorted or play at the wrong speed, the capture
+device's sample rate likely doesn't match Spotify's output. Verify that the
+selected monitor source uses the same sample rate reported by `pactl`.
