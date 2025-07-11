@@ -6,7 +6,7 @@ import typer
 from .audio import AudioStream
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
-from .util import find_spotify_monitor
+from .util import get_spotify_stream_info
 try:
     from pydbus.errors import DBusError
 except Exception:  # pragma: no cover - fallback if gi is missing
@@ -41,9 +41,8 @@ def main_callback(
 @app.command()
 def record(ctx: typer.Context):
     """Start recording until interrupted."""
-    samplerate = 44100
     try:
-        monitor = find_spotify_monitor()
+        info = get_spotify_stream_info()
     except RuntimeError as e:
         logging.error(f"Error finding audio source: {e}")
         raise typer.Exit(code=1)
@@ -53,19 +52,27 @@ def record(ctx: typer.Context):
 
     out_dir = ctx.obj["output"]
     fmt = ctx.obj["format"]
-    manager = SegmentManager(samplerate, output_dir=Path(out_dir) if out_dir else OUTPUT_DIR, fmt=fmt)
+    manager = SegmentManager(info.samplerate, output_dir=Path(out_dir) if out_dir else OUTPUT_DIR, fmt=fmt)
 
     try:
-        with AudioStream(monitor, samplerate=samplerate) as stream:
+        with AudioStream(info.monitor_name, samplerate=info.samplerate, channels=info.channels) as stream:
             def feeder():
                 while True:
                     frames = stream.read()
                     manager.add_frames(frames)
+
             threading.Thread(target=feeder, daemon=True).start()
 
             def on_change(track):
                 manager.start_track(track)
-            track_events(on_change)
+
+            def on_status(status: str):
+                if status == "Paused":
+                    manager.pause_recording()
+                elif status == "Playing":
+                    manager.resume_recording()
+
+            track_events(on_change, on_status)
     except KeyboardInterrupt:
         logging.info("Recording interrupted by user.")
     finally:

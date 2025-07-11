@@ -28,14 +28,26 @@ class SegmentManager:
         self.format = fmt
         self.buffer: List[np.ndarray] = []
         self.current: Optional[TrackInfo] = None
+        self.recording = True
+
+    def pause_recording(self) -> None:
+        """Stop accepting new frames until resumed."""
+        logger.debug("Recording paused")
+        self.recording = False
+
+    def resume_recording(self) -> None:
+        """Resume accepting frames."""
+        logger.debug("Recording resumed")
+        self.recording = True
 
     def add_frames(self, frames: np.ndarray) -> None:
-        if self.current is not None:
+        if self.current is not None and self.recording:
             self.buffer.append(frames)
 
     def start_track(self, track: TrackInfo) -> None:
         self.flush()
         self.current = track
+        self.recording = True
         self.buffer.clear()
         logger.info("▶ %s – %s", track.artist, track.title)
 

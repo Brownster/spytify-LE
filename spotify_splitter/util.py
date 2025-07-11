@@ -1,9 +1,18 @@
 import subprocess
 import json
 import logging
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
+
+@dataclass
+class StreamInfo:
+    """Information about the Spotify audio stream."""
+
+    monitor_name: str
+    samplerate: int
+    channels: int
 
 def _is_spotify(properties: dict) -> bool:
     """Return True if the given properties belong to a Spotify stream."""
@@ -21,19 +30,29 @@ def _is_spotify(properties: dict) -> bool:
     return False
 
 
-def find_spotify_monitor() -> str:
-    """Return the monitor source name for the active Spotify sink."""
+def get_spotify_stream_info() -> StreamInfo:
+    """Return :class:`StreamInfo` for the active Spotify stream."""
     out = subprocess.check_output(["pactl", "-f", "json", "list", "sink-inputs"]).decode()
     inputs = json.loads(out)
     for inp in inputs:
         props = inp.get("properties", {})
         if _is_spotify(props):
             sink = inp["sink"]
+            spec = inp.get("sample_spec", {})
+            rate = spec.get("rate", 44100)
+            channels = spec.get("channels", 2)
             sinks = json.loads(
                 subprocess.check_output(["pactl", "-f", "json", "list", "sinks"])
             )
             for s in sinks:
                 if s["index"] == sink:
-                    logger.debug("Found Spotify monitor %s", s["monitor_source_name"])
-                    return s["monitor_source_name"]
+                    monitor = s["monitor_source_name"]
+                    logger.debug("Found Spotify monitor %s", monitor)
+                    return StreamInfo(monitor, rate, channels)
     raise RuntimeError("Spotify sink not found – is music playing?")
+
+
+def find_spotify_monitor() -> str:
+    """Backward-compatible wrapper returning only the monitor name."""
+    return get_spotify_stream_info().monitor_name
+

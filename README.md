@@ -20,6 +20,8 @@ poetry install
 
 - Listens for track changes via MPRIS
 - Captures audio through PipeWire/PulseAudio monitor sources
+- Automatically detects sample rate and channel count
+- Pauses recording when playback is paused
 - Writes MP3 (or other formats) with ID3 tags and cover art
 - Provides a Typer-based CLI with logging via Rich
 

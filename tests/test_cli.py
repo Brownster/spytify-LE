@@ -18,8 +18,12 @@ def dummy_modules(monkeypatch):
 
 
 def test_cli_help(monkeypatch):
-    monkeypatch.setattr("spotify_splitter.main.track_events", lambda func: None)
-    monkeypatch.setattr("spotify_splitter.main.find_spotify_monitor", lambda: "dummy")
+    monkeypatch.setattr("spotify_splitter.main.track_events", lambda *a, **k: None)
+    from spotify_splitter.util import StreamInfo
+    monkeypatch.setattr(
+        "spotify_splitter.main.get_spotify_stream_info",
+        lambda: StreamInfo("dummy", 44100, 2),
+    )
     from spotify_splitter.main import app
 
     runner = CliRunner()
