@@ -67,3 +67,11 @@ def test_skip_ad(monkeypatch, tmp_path):
     manager.flush()
 
     assert not exported
+
+
+def test_is_song_new_format(monkeypatch):
+    """Track IDs starting with '/com/spotify/track/' are considered songs."""
+    segmenter = load_segmenter(monkeypatch)
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1)
+    assert segmenter.is_song(song)

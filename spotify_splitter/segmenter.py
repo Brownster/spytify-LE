@@ -13,11 +13,15 @@ def is_song(track: TrackInfo) -> bool:
     """Return ``True`` if ``track`` looks like a real Spotify song.
 
     Ads usually expose a non standard ``mpris:trackid`` or omit it entirely.
-    A genuine track will use a URI starting with ``spotify:track:``.
+    A genuine track will usually have a URI starting with ``spotify:track:`` or
+    a D-Bus object path starting with ``/com/spotify/track/``.
     """
     if not track or not track.id:
         return False
-    return str(track.id).startswith("spotify:track:")
+    track_id_str = str(track.id)
+    return track_id_str.startswith("spotify:track:") or track_id_str.startswith(
+        "/com/spotify/track/"
+    )
 
 logger = logging.getLogger(__name__)
 
