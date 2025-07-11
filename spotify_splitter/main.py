@@ -5,6 +5,7 @@ import typer
 
 from rich.live import Live
 from rich.spinner import Spinner
+from rich.logging import RichHandler
 
 from .audio import AudioStream
 from .segmenter import SegmentManager, OUTPUT_DIR
@@ -28,7 +29,11 @@ def main_callback(
 ):
     """Record Spotify playback and split into tracks."""
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(level=level, handlers=[logging.StreamHandler()])
+    logging.basicConfig(
+        level=level,
+        handlers=[RichHandler(rich_tracebacks=True)],
+        force=True,
+    )
     if output:
         ctx.obj = {
             "output": output,
