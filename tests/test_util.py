@@ -1,6 +1,15 @@
 import json
 import subprocess
 import pytest
+import sys
+import types
+
+try:
+    import sounddevice
+except Exception:  # pragma: no cover - sounddevice may not be installed
+    sounddevice = types.ModuleType("sounddevice")
+    sounddevice.check_input_settings = lambda device: None
+    sys.modules["sounddevice"] = sounddevice
 from spotify_splitter.util import get_spotify_stream_info, _is_spotify, StreamInfo
 
 
@@ -24,6 +33,7 @@ def test_get_spotify_stream_info(monkeypatch):
         return sinks
 
     monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    monkeypatch.setattr(sounddevice, "check_input_settings", lambda device: None)
     info = get_spotify_stream_info()
     assert info == StreamInfo("alsa_output.monitor", 48000, 2)
 
@@ -49,6 +59,7 @@ def test_get_spotify_stream_info_new_format(monkeypatch):
         return sinks
 
     monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    monkeypatch.setattr(sounddevice, "check_input_settings", lambda device: None)
     info = get_spotify_stream_info()
     assert info == StreamInfo(
         "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor", 44100, 2
@@ -74,6 +85,7 @@ def test_get_spotify_stream_info_node_name(monkeypatch):
         return sinks
 
     monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    monkeypatch.setattr(sounddevice, "check_input_settings", lambda device: None)
     info = get_spotify_stream_info()
     assert info == StreamInfo("spotify", 44100, 2)
 
@@ -105,6 +117,7 @@ def test_get_spotify_stream_info_sink_rate(monkeypatch):
         return sinks
 
     monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    monkeypatch.setattr(sounddevice, "check_input_settings", lambda device: None)
     info = get_spotify_stream_info()
     assert info == StreamInfo("alsa_output.monitor", 24000, 2)
 
