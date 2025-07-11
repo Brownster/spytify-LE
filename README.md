@@ -32,6 +32,8 @@ poetry install
 poetry run spotify-splitter record
 ```
 
+By default, tracks are saved under `~/Music/<Artist>/<Album>/<Artist> - <Title>.mp3`.
+
 For a custom output directory and format:
 
 ```bash
