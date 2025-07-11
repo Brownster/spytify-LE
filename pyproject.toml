@@ -5,7 +5,7 @@ description = "Record Spotify playback and split tracks with metadata"
 authors = ["Example <example@example.com>"]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.13"
+python = ">=3.10,<4.0"
 pydbus = "^0.6.0"
 sounddevice = "^0.5.2"
 numpy = "^2.2.6"
