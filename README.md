@@ -24,6 +24,7 @@ poetry install
 - Pauses recording when playback is paused
 - Writes MP3 (or other formats) with ID3 tags and cover art
 - Provides a Typer-based CLI with logging via Rich
+- Automatically skips advertisements using track metadata
 
 ## Usage
 

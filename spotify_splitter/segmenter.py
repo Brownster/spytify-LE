@@ -9,6 +9,16 @@ from typing import List, Optional
 
 from .mpris import TrackInfo
 
+def is_song(track: TrackInfo) -> bool:
+    """Return ``True`` if ``track`` looks like a real Spotify song.
+
+    Ads usually expose a non standard ``mpris:trackid`` or omit it entirely.
+    A genuine track will use a URI starting with ``spotify:track:``.
+    """
+    if not track or not track.id:
+        return False
+    return str(track.id).startswith("spotify:track:")
+
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path.home() / "Music" / "SpotifyRips"
@@ -41,15 +51,24 @@ class SegmentManager:
         self.recording = True
 
     def add_frames(self, frames: np.ndarray) -> None:
+        """Append audio *frames* to the buffer if a song is active."""
         if self.current is not None and self.recording:
             self.buffer.append(frames)
 
     def start_track(self, track: TrackInfo) -> None:
+        """Begin buffering frames for ``track`` if it is not an advertisement."""
         self.flush()
-        self.current = track
-        self.recording = True
         self.buffer.clear()
-        logger.info("▶ %s – %s", track.artist, track.title)
+
+        if is_song(track):
+            self.current = track
+            self.recording = True
+            logger.info("▶ Recording: %s – %s", track.artist, track.title)
+        else:
+            # Treat ads as gaps; frames will be ignored until the next track
+            self.current = None
+            self.recording = False
+            logger.info("⏩ Ad detected, skipping recording")
 
     def flush(self) -> None:
         if not self.current or not self.buffer:

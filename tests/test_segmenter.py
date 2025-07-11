@@ -27,7 +27,7 @@ def test_segment_manager_flush(monkeypatch, tmp_path):
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
 
-    track = TrackInfo("Artist", "Title", "Album", None, "1")
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1")
     manager.start_track(track)
     manager.add_frames(np.zeros((2, 2), dtype="float32"))
     manager.flush()
@@ -40,7 +40,7 @@ def test_pause_resume(monkeypatch, tmp_path):
     SegmentManager = segmenter.SegmentManager
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    track = TrackInfo("Artist", "Title", "Album", None, "1")
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1")
     manager.start_track(track)
     manager.add_frames(np.ones((2, 2), dtype="float32"))
     manager.pause_recording()
@@ -49,3 +49,19 @@ def test_pause_resume(monkeypatch, tmp_path):
     manager.add_frames(np.ones((2, 2), dtype="float32"))
 
     assert len(manager.buffer) == 2
+
+
+def test_skip_ad(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    exported = []
+    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
+
+    ad = TrackInfo("AdArtist", "AdTitle", "AdAlbum", None, "spotify:ad:123")
+    manager.start_track(ad)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.flush()
+
+    assert not exported
