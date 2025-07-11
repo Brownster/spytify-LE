@@ -42,12 +42,12 @@ class SegmentManager:
 
     def pause_recording(self) -> None:
         """Stop accepting new frames until resumed."""
-        logger.debug("Recording paused")
+        logger.info("⏸️ Recording paused")
         self.recording = False
 
     def resume_recording(self) -> None:
         """Resume accepting frames."""
-        logger.debug("Recording resumed")
+        logger.info("▶️ Recording resumed")
         self.recording = True
 
     def add_frames(self, frames: np.ndarray) -> None:
