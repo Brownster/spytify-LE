@@ -43,6 +43,7 @@ def get_spotify_stream_info() -> StreamInfo:
         if _is_spotify(props):
             sink = inp["sink"]
             spec = inp.get("sample_spec", inp.get("sample_specification"))
+            node_name = props.get("node.name")
             if isinstance(spec, dict):
                 rate = spec.get("rate", 44100)
                 channels = spec.get("channels", 2)
@@ -57,6 +58,9 @@ def get_spotify_stream_info() -> StreamInfo:
             else:
                 rate = 44100
                 channels = 2
+            if node_name:
+                logger.debug("Found Spotify node %s", node_name)
+                return StreamInfo(node_name, rate, channels)
             sinks = json.loads(
                 subprocess.check_output(["pactl", "-f", "json", "list", "sinks"])
             )

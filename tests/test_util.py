@@ -55,6 +55,29 @@ def test_get_spotify_stream_info_new_format(monkeypatch):
     )
 
 
+def test_get_spotify_stream_info_node_name(monkeypatch):
+    """Use node.name when no monitor_source_name is available."""
+    inputs = json.dumps(
+        [
+            {
+                "properties": {"application.name": "Spotify", "node.name": "spotify"},
+                "sink": 8,
+                "sample_spec": {"rate": 44100, "channels": 2},
+            }
+        ]
+    ).encode()
+    sinks = json.dumps([{"index": 8}]).encode()
+
+    def fake_cmd(cmd):
+        if "sink-inputs" in cmd:
+            return inputs
+        return sinks
+
+    monkeypatch.setattr(subprocess, "check_output", lambda cmd: fake_cmd(cmd))
+    info = get_spotify_stream_info()
+    assert info == StreamInfo("spotify", 44100, 2)
+
+
 @pytest.mark.parametrize(
     "key,value",
     [
