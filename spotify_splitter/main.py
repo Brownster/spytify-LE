@@ -3,6 +3,9 @@ import logging
 from pathlib import Path
 import typer
 
+from rich.live import Live
+from rich.spinner import Spinner
+
 from .audio import AudioStream
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
@@ -54,25 +57,38 @@ def record(ctx: typer.Context):
     fmt = ctx.obj["format"]
     manager = SegmentManager(info.samplerate, output_dir=Path(out_dir) if out_dir else OUTPUT_DIR, fmt=fmt)
 
+    spinner = Spinner("dots", text="Waiting for track change...")
+    live = Live(spinner, transient=True, refresh_per_second=10)
+
     try:
-        with AudioStream(info.monitor_name, samplerate=info.samplerate, channels=info.channels) as stream:
-            def feeder():
-                while True:
-                    frames = stream.read()
-                    manager.add_frames(frames)
+        with live:
+            with AudioStream(info.monitor_name, samplerate=info.samplerate, channels=info.channels) as stream:
+                def feeder():
+                    while True:
+                        frames = stream.read()
+                        manager.add_frames(frames)
 
-            threading.Thread(target=feeder, daemon=True).start()
+                threading.Thread(target=feeder, daemon=True).start()
 
-            def on_change(track):
-                manager.start_track(track)
+                def on_change(track):
+                    manager.start_track(track)
+                    if manager.current:
+                        spinner.text = f"Recording: [bold cyan]{track.artist} – {track.title}[/]"
+                    else:
+                        spinner.text = "Skipping ad..."
 
-            def on_status(status: str):
-                if status == "Paused":
-                    manager.pause_recording()
-                elif status == "Playing":
-                    manager.resume_recording()
+                def on_status(status: str):
+                    if status == "Paused":
+                        manager.pause_recording()
+                        spinner.text = "[bold yellow]Paused[/]"
+                    elif status == "Playing":
+                        manager.resume_recording()
+                        if manager.current:
+                            spinner.text = f"Recording: [bold cyan]{manager.current.artist} – {manager.current.title}[/]"
+                        else:
+                            spinner.text = "Waiting for track change..."
 
-            track_events(on_change, on_status)
+                track_events(on_change, on_status)
     except KeyboardInterrupt:
         logging.info("Recording interrupted by user.")
     finally:
