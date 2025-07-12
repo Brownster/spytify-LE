@@ -149,6 +149,51 @@ import:
   incremental: true
 ```
 
+## Automated Library Management with Lidarr
+
+You can also let [Lidarr](https://lidarr.audio/) handle tagging and
+organization. Point Lidarr's "Manual Import" (Drone Factory) folder to the same
+directory used by `spotify-splitter` and it will automatically match tracks and
+move them into your music library.
+
+### Example Docker Compose
+
+```yaml
+version: '3.8'
+services:
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+    volumes:
+      - ./lidarr_config:/config
+      - /path/on/host/to/your/music:/music
+      - /path/on/host/to/downloads:/downloads
+    ports:
+      - 8686:8686
+    restart: unless-stopped
+
+  spotifyd:
+    # ... spotifyd configuration ...
+
+  spotify-splitter:
+    build: .
+    container_name: spotify-splitter
+    network_mode: "host"
+    depends_on:
+      - spotifyd
+    volumes:
+      - /path/on/host/to/downloads:/downloads
+    restart: unless-stopped
+```
+
+Set `OUTPUT_DIR` inside `spotify-splitter` to `/downloads/spotify_rips` and
+configure Lidarr to monitor the same path. When new files appear, Lidarr will
+import them, fetch metadata, and move them into your organized library.
+
 ## Troubleshooting
 
 If you see an error like `ValueError: No input device matching` when starting a
