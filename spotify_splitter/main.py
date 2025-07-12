@@ -106,10 +106,10 @@ def record(ctx: typer.Context):
 
                 track_events(on_change, on_status)
     except KeyboardInterrupt:
-        logging.info("Recording interrupted by user.")
+        logging.info(
+            "Recording interrupted by user. The currently recording track will not be saved."
+        )
     finally:
-        logging.info("Saving final track...")
-        manager.flush()
         logging.info("Done.")
 
 

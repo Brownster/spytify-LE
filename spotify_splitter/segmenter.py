@@ -44,6 +44,7 @@ class SegmentManager:
         self.buffer: List[np.ndarray] = []
         self.current: Optional[TrackInfo] = None
         self.recording = True
+        self.is_first_track = True
 
     def pause_recording(self) -> None:
         """Stop accepting new frames until resumed."""
@@ -62,7 +63,11 @@ class SegmentManager:
 
     def start_track(self, track: TrackInfo) -> None:
         """Begin buffering frames for ``track`` if it is not an advertisement."""
-        self.flush()
+        if self.current is not None:
+            if self.is_first_track:
+                self.is_first_track = False
+            else:
+                self.flush()
         self.buffer.clear()
 
         if is_song(track):
