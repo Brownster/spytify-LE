@@ -70,6 +70,29 @@ def test_skip_ad(monkeypatch, tmp_path):
     assert not exported
 
 
+def test_only_complete_tracks_saved(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    exported = []
+    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t.title))
+
+    t1 = TrackInfo("A1", "T1", "Al1", None, "spotify:track:1", 1)
+    t2 = TrackInfo("A2", "T2", "Al2", None, "spotify:track:2", 2)
+    t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3)
+
+    manager.start_track(t1)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.start_track(t2)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.start_track(t3)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+
+    assert exported == ["T2"]
+
+
 def test_is_song_new_format(monkeypatch):
     """Track IDs starting with '/com/spotify/track/' are considered songs."""
     segmenter = load_segmenter(monkeypatch)
