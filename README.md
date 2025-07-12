@@ -196,6 +196,12 @@ Set `OUTPUT_DIR` inside `spotify-splitter` to `/downloads/spotify_rips` and
 configure Lidarr to monitor the same path. When new files appear, Lidarr will
 import them, fetch metadata, and move them into your organized library.
 
+
+# Not using any post processing adding music folder to Strawberry
+<img width="400" height="764" alt="image" src="https://github.com/user-attachments/assets/e2cebd73-57da-4d80-a896-90ffa5c6c804" />
+
+
+
 ## Troubleshooting
 
 If you see an error like `ValueError: No input device matching` when starting a
