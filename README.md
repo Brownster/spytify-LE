@@ -70,6 +70,7 @@ Recorded tracks will be saved to the path specified by `MUSIC_PATH`.
 - Provides a Typer-based CLI with logging via Rich
 - Automatically skips advertisements using track metadata
 - Avoids re-recording tracks that already exist on disk
+- Works with both Spotify and spotifyd via the configurable `--player` option
 
 ## Usage
 
@@ -83,6 +84,12 @@ For a custom output directory and format:
 
 ```bash
 poetry run spotify-splitter --output ~/Music/Rips --format flac record
+```
+
+To use the headless `spotifyd` client instead of the desktop app:
+
+```bash
+poetry run spotify-splitter record --player spotifyd
 ```
 
 Use `--help` to view available options.

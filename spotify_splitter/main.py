@@ -47,7 +47,19 @@ def main_callback(
 
 
 @app.command()
-def record(ctx: typer.Context):
+def record(
+    ctx: typer.Context,
+    dump_metadata: bool = typer.Option(
+        False,
+        "--dump-metadata",
+        help="Print raw MPRIS metadata for debugging.",
+    ),
+    player: str = typer.Option(
+        "spotify",
+        "--player",
+        help="The MPRIS player name to connect to (e.g., 'spotify' or 'spotifyd').",
+    ),
+):
     """Start recording until interrupted."""
     try:
         info = get_spotify_stream_info()
@@ -104,7 +116,12 @@ def record(ctx: typer.Context):
                         else:
                             spinner.text = "Waiting for track change..."
 
-                track_events(on_change, on_status)
+                track_events(
+                    on_change,
+                    on_status,
+                    dump_metadata=dump_metadata,
+                    player_name=player,
+                )
     except KeyboardInterrupt:
         logging.info(
             "Recording interrupted by user. The currently recording track will not be saved."

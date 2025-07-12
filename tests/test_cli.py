@@ -30,3 +30,4 @@ def test_cli_help(monkeypatch):
     result = runner.invoke(app, ["record", "--help"])
     assert result.exit_code == 0
     assert "Start recording until interrupted" in result.output
+    assert "--player" in result.output

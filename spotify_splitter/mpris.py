@@ -3,6 +3,12 @@ from pydbus import SessionBus
 from collections import namedtuple
 from typing import Callable, Optional
 import logging
+import json
+try:
+    from pydbus.errors import DBusError
+except Exception:  # pragma: no cover - fallback if gi is missing
+    class DBusError(Exception):
+        pass
 
 TrackInfo = namedtuple(
     "TrackInfo",
@@ -15,19 +21,35 @@ logger = logging.getLogger(__name__)
 def track_events(
     on_change: Callable[[TrackInfo], None],
     on_status: Optional[Callable[[str], None]] = None,
+    dump_metadata: bool = False,
+    player_name: str = "spotify",
 ) -> None:
-    """Subscribe to MPRIS track change events from Spotify.
+    """Subscribe to MPRIS track change events from a Spotify player.
 
     ``on_change`` is called with a :class:`TrackInfo` whenever the track updates.
     If provided, ``on_status`` is called with the string ``PlaybackStatus`` when
     the player status changes.
+
+    ``dump_metadata`` prints raw metadata dictionaries for debugging.
+    ``player_name`` selects the MPRIS service (e.g. ``spotify`` or ``spotifyd``).
     """
     bus = SessionBus()
-    spotify = bus.get("org.mpris.MediaPlayer2.spotify", "/org/mpris/MediaPlayer2")
+    service_name = f"org.mpris.MediaPlayer2.{player_name}"
+    logger.debug("Connecting to MPRIS service: %s", service_name)
+    try:
+        spotify = bus.get(service_name, "/org/mpris/MediaPlayer2")
+    except DBusError as e:
+        logger.error(
+            "Could not connect to D-Bus service '%s'. Is the player running?",
+            service_name,
+        )
+        raise e
 
     def handler(_iface, changed, _invalid):
         md = changed.get("Metadata", {})
         if md:
+            if dump_metadata:
+                print(json.dumps(md, indent=2))
             try:
                 position = spotify.Position
             except Exception:
