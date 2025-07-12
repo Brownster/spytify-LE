@@ -4,7 +4,10 @@ from collections import namedtuple
 from typing import Callable, Optional
 import logging
 
-TrackInfo = namedtuple("TrackInfo", "artist title album art_uri id track_number")
+TrackInfo = namedtuple(
+    "TrackInfo",
+    "artist title album art_uri id track_number position",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +28,10 @@ def track_events(
     def handler(_iface, changed, _invalid):
         md = changed.get("Metadata", {})
         if md:
+            try:
+                position = spotify.Position
+            except Exception:
+                position = 0
             track = TrackInfo(
                 artist=md.get("xesam:artist", ["Unknown"])[0],
                 title=md.get("xesam:title", "Unknown"),
@@ -32,6 +39,7 @@ def track_events(
                 art_uri=md.get("mpris:artUrl"),
                 id=md.get("mpris:trackid"),
                 track_number=md.get("xesam:trackNumber"),
+                position=position,
             )
             logger.debug("Track changed: %s - %s", track.artist, track.title)
             on_change(track)
