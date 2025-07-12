@@ -158,3 +158,26 @@ def test_float_export_not_distorted(monkeypatch, tmp_path):
     ref_arr = np.array(ref_out.get_array_of_samples())
     diff = np.mean(np.abs(out_arr - ref_arr))
     assert diff < 1
+
+
+def test_skip_existing_file(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
+
+    existing = manager._get_track_path(track)
+    existing.parent.mkdir(parents=True, exist_ok=True)
+    existing.touch()
+
+    called = []
+    monkeypatch.setattr(manager, "_export", lambda seg, t: called.append(True))
+
+    manager.start_track(track)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.flush()
+
+    assert not called
+    assert manager.current is None

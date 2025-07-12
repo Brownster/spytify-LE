@@ -47,6 +47,21 @@ class SegmentManager:
         self.is_first_track = True
         self.current_complete = True
 
+    def _get_track_path(self, t: TrackInfo) -> Path:
+        """Return the expected output path for *t*."""
+        safe_artist = sanitize(t.artist)
+        safe_album = sanitize(t.album)
+        safe_title = sanitize(t.title)
+
+        folder = self.output_dir / safe_artist / safe_album
+        num_prefix = ""
+        if t.track_number:
+            try:
+                num_prefix = f"{int(t.track_number):02d} - "
+            except Exception:
+                num_prefix = f"{t.track_number} - "
+        return folder / f"{num_prefix}{safe_title}.{self.format}"
+
     def pause_recording(self) -> None:
         """Stop accepting new frames until resumed."""
         logger.info("⏸️ Recording paused")
@@ -72,10 +87,17 @@ class SegmentManager:
         self.buffer.clear()
 
         if is_song(track):
-            self.current = track
-            self.recording = True
-            self.current_complete = track.position <= 2_000_000
-            logger.info("▶ Recording: %s – %s", track.artist, track.title)
+            path = self._get_track_path(track)
+            if path.exists():
+                logger.info("⏩ Track already recorded, skipping %s", path)
+                self.current = None
+                self.current_complete = False
+                self.recording = False
+            else:
+                self.current = track
+                self.recording = True
+                self.current_complete = track.position <= 2_000_000
+                logger.info("▶ Recording: %s – %s", track.artist, track.title)
         else:
             # Treat ads as gaps; frames will be ignored until the next track
             self.current = None
@@ -105,19 +127,12 @@ class SegmentManager:
             sample_width=2,
             channels=segment.shape[1],
         )
-        safe_artist = sanitize(t.artist)
-        safe_album = sanitize(t.album)
-        safe_title = sanitize(t.title)
 
-        folder = self.output_dir / safe_artist / safe_album
-        folder.mkdir(parents=True, exist_ok=True)
-        num_prefix = ""
-        if t.track_number:
-            try:
-                num_prefix = f"{int(t.track_number):02d} - "
-            except Exception:
-                num_prefix = f"{t.track_number} - "
-        path = folder / f"{num_prefix}{safe_title}.{self.format}"
+        path = self._get_track_path(t)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            logger.info("File %s already exists, skipping export", path)
+            return
         audio_segment.export(path, format=self.format, bitrate="320k")
 
         try:
