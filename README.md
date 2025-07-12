@@ -245,3 +245,87 @@ ensure the correct audio backend and monitor sources are available.
 If saved tracks sound distorted or play at the wrong speed, the capture
 device's sample rate likely doesn't match Spotify's output. Verify that the
 selected monitor source uses the same sample rate reported by `pactl`.
+
+
+From Clicks to Code: Building a Headless Spotify Recorder
+
+This project started with a simple, almost nostalgic idea: what if I could have a personal, offline copy of my Spotify playlists, just like the old days of curating an MP3 library? The manual process of recording and splitting tracks is tedious and error-prone. I wanted a tool that could do it for me, automatically and reliably. This is the story of building that tool, spotify-splitter.
+The Core Idea: Listen, Record, Split
+
+The initial concept was straightforward:
+
+    Listen for what song is currently playing on Spotify.
+
+    Record the system's audio output.
+
+    Split the recording into a new file every time the song changes.
+
+    Tag the file with the correct artist, title, and album information.
+
+This simple idea, however, led to a fascinating journey through the layers of the Linux desktop stack.
+Getting the Data: MPRIS and D-Bus
+
+The first challenge was getting the track information. How does a script know what Spotify is playing? The answer is MPRIS (Media Player Remote Interfacing Specification), a standard D-Bus interface. Most media players on Linux, including Spotify and spotifyd, use it to publish "Now Playing" information and accept commands like play, pause, and skip.
+
+Using the pydbus library, the script connects to the user's session D-Bus and listens for property changes from the org.mpris.MediaPlayer2.spotify service. This provides all the essential metadata: artist, title, album, and even a URL for the album art.
+Capturing the Audio: The Invisible Microphone
+
+With the metadata sorted, the next step was to capture the audio. The most robust way to do this on a modern Linux system is to record from a monitor source. A monitor source is a virtual input device that mirrors a real output device. In simple terms, it's an invisible microphone listening directly to what your speakers or headphones are playing.
+
+The sounddevice library proved perfect for this. It provides a clean interface to the underlying PortAudio library. By using pactl (the PulseAudio/PipeWire command-line tool) to find the name of Spotify's monitor source, we could tell sounddevice exactly which stream to record.
+The First Major Bug: The Wall of Noise
+
+The initial recordings were a success... in that they created files. The audio itself was a horrifying, distorted mess of static. After some excellent debugging help, the culprit was found: a fundamental data type mismatch.
+
+    sounddevice was capturing high-precision float32 audio samples (where values range from -1.0 to 1.0).
+
+    pydub, the library used for exporting the MP3, was being told to interpret the raw bytes of those floats as if they were 32-bit integers.
+
+The solution was to convert the audio format before exporting. By scaling the float values and converting them to standard 16-bit integers, the garbled noise was transformed into crystal-clear audio.
+Generated python
+
+      
+# The key to clean audio: converting from float to int16
+raw_float_samples = np.concatenate(self.buffer)
+int_samples = (raw_float_samples * np.iinfo(np.int16).max).astype(np.int16)
+
+# Now, pydub gets the data it expects
+audio_segment = AudioSegment(
+    int_samples.tobytes(),
+    sample_width=2, # 16-bit = 2 bytes
+    ...
+)
+
+    
+
+IGNORE_WHEN_COPYING_START
+Use code with caution. Python
+IGNORE_WHEN_COPYING_END
+Making It Robust: From Script to Tool
+
+With the core functionality working, the focus shifted to making the tool truly reliable for long-term, headless use. This involved adding several key features:
+
+    Handling Incomplete Tracks: A track is only saved if the script has seen it from beginning to end. This prevents saving partial rips if the script is started mid-song or is stopped before a track finishes.
+
+    Skipping Ads and Existing Files: The script inspects the track ID to differentiate songs from ads and checks if a file already exists to avoid re-recording entire playlists.
+
+    Automatic Device Detection: The code was made more resilient to handle the different ways that PipeWire and PulseAudio name their audio devices, and to dynamically detect the correct sample rate.
+
+    A Polished UI: Using rich, the application now provides a live-updating spinner that gives the user constant feedback on what's happening, from recording to pausing to skipping ads.
+
+The Headless Dream: Docker and spotifyd
+
+The final goal was to run this as a completely automated service. The solution was to combine spotify-splitter with spotifyd (a headless Spotify client) and package everything in Docker.
+
+A docker-compose.yml file now orchestrates the entire setup:
+
+    The spotifyd Service: Runs the headless Spotify client, which plays audio to the system.
+
+    The spotify-splitter Service: Runs our application, which finds the audio from spotifyd and records it.
+
+This setup is perfect for a home server or a Raspberry Pi. You can queue up a massive playlist from your phone, tell it to play on the headless client, and walk away. Hours later, you'll have a folder full of perfectly recorded and split tracks.
+Conclusion
+
+spotify-splitter is a testament to the power of the open-source ecosystem. It stands on the shoulders of giants, from the Linux audio stack to the developers of mutagen, pydub, and rich. It began as a simple idea and evolved through a challenging but rewarding debugging process into a stable, feature-rich tool that solves a real-world problem.
+
+I hope you find it as useful as I do. Happy listening, and happy hacking
