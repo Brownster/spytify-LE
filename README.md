@@ -78,7 +78,7 @@ poetry run spotify-splitter --output ~/Music/Rips --format flac record
 
 Use `--help` to view available options.
 
-## Post-Processing with Beets (Recommended)
+## Post-Processing with Beets (Optional we do add enough tag info to be imported ok into IPOD / MP3 player, Year and Genre will not be adeded by spoti2)
 
 This tool is designed to produce raw track rips. For the best results,
 install [Beets](https://beets.io/) to automatically tag and organize your
