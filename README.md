@@ -2,6 +2,8 @@
 
 This project records Spotify playback on Linux and saves each track as an individual audio file with metadata.
 
+<img width="1508" height="717" alt="image" src="https://github.com/user-attachments/assets/8b02dc7c-4ef2-4916-8c4b-95ce27e7e2b6" />
+
 
 ## Prerequisites
 
