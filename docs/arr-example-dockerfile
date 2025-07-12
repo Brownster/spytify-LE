@@ -1,0 +1,292 @@
+version: "3.8"
+services:
+  vpn:
+    image: qmcgaw/gluetun:latest
+    container_name: vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - "/home/holly/docker/vpn:/gluetun"
+    env_file:
+      - /home/holly/docker/vpn/.env
+    healthcheck:
+      test: curl --fail http://localhost:8000 || exit 1
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+    ports:
+      - 9117:9117
+      - 8989:8989
+      - 7878:7878
+      - 9091:9091
+      - 6789:6789
+      - 6500:6500
+      - 8686:8686
+      - 8080:8080
+    networks:
+      - vpn_network
+
+  requestrr:
+    # image: darkalfx/requestrr:latest
+    image: thomst08/requestrr:latest
+    container_name: requestrr
+    network_mode: bridge
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+    volumes:
+      - /home/holly/docker/requestrr/config:/config
+    restart: unless-stopped
+    ports:
+      - 4545:4545
+
+  jackett:
+    image: linuxserver/jackett:latest
+    container_name: jackett
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/jackett:/config
+      - /mnt/downloads:/downloads/completed/
+    restart: unless-stopped
+
+  sonarr:
+    image: linuxserver/sonarr:latest
+    container_name: sonarr
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/sonarr:/config
+      - /mnt/storage/TV:/tv
+      - /mnt/downloads:/downloads
+      - /mnt/downloads/completed/transmission/iplayar:/downloads/iplayar
+    restart: unless-stopped
+
+  radarr:
+    image: linuxserver/radarr:latest
+    container_name: radarr
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/radarr:/config
+      - /mnt/storage/Movies:/movies
+      - /mnt/downloads:/downloads
+    restart: unless-stopped
+
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/lidarr/config:/config
+      - /mnt/storage/music:/music
+      - /mnt/downloads:/downloads
+    restart: unless-stopped
+
+  transmission:
+    image: linuxserver/transmission:latest
+    container_name: transmission
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/transmission:/config
+      - /mnt/downloads:/downloads
+    restart: unless-stopped
+
+  rdtclient:
+    image: rogerfar/rdtclient
+    container_name: rdtclient
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/rdtclient:/data/db
+      - /mnt/downloads:/downloads
+    logging:
+       driver: json-file
+       options:
+          max-size: 10m
+    restart: unless-stopped
+
+
+  nzbget:
+    image: linuxserver/nzbget:latest
+    container_name: nzbget
+    network_mode: "service:vpn"
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/nzbget:/config
+      - /mnt/downloads:/downloads
+    restart: unless-stopped
+
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:latest
+    container_name: sabnzbd
+    network_mode: "service:vpn"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/London
+    volumes:
+      - /home/holly/docker/sabnzbd/config:/config
+      - /mnt/downloads/sabdnzbd.incomplete:/incomplete-downloads
+      - /mnt/downloads:/downloads
+    restart: unless-stopped
+
+  get_iplayer:
+    image: ghcr.io/thespad/get_iplayer:latest
+    container_name: get_iplayer
+    network_mode: bridge
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+      - INCLUDERADIO=false
+      - ENABLEIMPORT=true
+    volumes:
+      - /home/holly/docker/get_iplayer/config:/config
+      - /mnt/downloads/getiplayer:/downloads/incomplete
+      - /mnt/downloads/completed/transmission/iplayar:/downloads/iplayar
+    ports:
+      - 1935:1935
+    restart: unless-stopped
+
+  lazylibrarian:
+    image: linuxserver/lazylibrarian:latest
+    container_name: lazylibrarian
+    network_mode: bridge
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/lazylibrarian:/config
+      - /mnt/storage/books:/books
+      - /mnt/storage/audiobooks:/audiobooks
+      - /mnt/downloads/transmission/books:/downloads
+    # docker_mods:
+    #   - universal-calibre
+    ports:
+      - 5299:5299
+    restart: unless-stopped
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    network_mode: bridge
+    ports:
+      - 13378:80
+    volumes:
+      - /mnt/storage/audiobooks:/audiobooks
+      - /mnt/storage/podcasts:/podcasts
+      - /home/holly/docker/audiobookshelf/config:/config
+      - /home/holly/docker/audiobookshelf/metadata:/metadata
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+
+  jellyfin:
+    image: linuxserver/jellyfin:latest
+    container_name: jellyfin
+    network_mode: bridge
+    environment:
+      - TZ=Europe/London
+      - PUID=1000
+      - PGID=1000
+    volumes:
+      - /home/holly/docker/jellyfin:/config
+      - /mnt/storage/:/media
+    ports:
+      - 8096:8096
+      - 8920:8920
+    restart: unless-stopped
+
+  pi-health-dashboard:
+    image: brownster/pi-health:latest
+    container_name: pi-health-dashboard
+    environment:
+      - TZ=${TIMEZONE}
+      - DISK_PATH=/mnt/storage
+      - DISK_PATH_2=/mnt/downloads
+      - DOCKER_COMPOSE_PATH=/config/docker-compose.yml
+      - ENV_FILE_PATH=/config/.env
+      - BACKUP_DIR=/config/backups
+    ports:
+      - 8100:8080
+    volumes:
+      - /proc:/host_proc:ro
+      - /sys:/host_sys:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/holly/docker/:/config
+      - /mnt/storage:/mnt/storage
+      - /mnt/downloads:/mnt/downloads
+    restart: unless-stopped
+
+  watchtower:
+    image: containrrr/watchtower:latest
+    container_name: watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - WATCHTOWER_CLEANUP=true
+      - WATCHTOWER_POLL_INTERVAL=3600
+      - WATCHTOWER_INCLUDE="vpn,sonarr,radarr,pi-health-dashboard,airsonic-advanced,audiobookshelf,get_iplayer,nzbget,rdtclient,transmission,lidarr,radarr,sonarr"
+    restart: unless-stopped
+
+  spotifyd:
+    image: spotifyd/spotifyd:latest
+    container_name: spotifyd
+    network_mode: "host"
+    volumes:
+      - ./spotifyd.conf:/etc/spotifyd.conf
+      - spotifyd-cache:/var/cache/spotifyd
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /dev/snd:/dev/snd
+    restart: unless-stopped
+
+  spotify-splitter:
+    build: ..
+    container_name: spotify-splitter
+    network_mode: "host"
+    depends_on:
+      - spotifyd
+    env_file:
+      - ../.env
+    volumes:
+      - "${MUSIC_PATH}:/Music"
+      - "${BEETS_CONFIG_PATH}:/root/.config/beets"
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /dev/snd:/dev/snd
+    restart: unless-stopped
+
+networks:
+  vpn_network:
+    driver: bridge
+volumes:
+  spotifyd-cache:

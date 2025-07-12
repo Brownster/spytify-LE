@@ -46,7 +46,12 @@ for headless operation.
    The container runs `beet import -AW /Music` on a schedule. Set
    `BEETS_CRON_SCHEDULE` in `.env` to control how often the import runs and
    edit files under `./beets` to customise the configuration.
-5. **Run the services**
+5. **Expose your audio devices**
+   Both containers need access to the host PulseAudio or PipeWire socket in
+   order to play and capture audio. Mount `/run/user/1000/pulse` (or the
+   appropriate path for your user) and `/dev/snd` into the containers.
+   Example volume mappings are shown below.
+6. **Run the services**
    ```bash
    docker-compose up --build -d
    ```
@@ -179,7 +184,14 @@ services:
     restart: unless-stopped
 
   spotifyd:
-    # ... spotifyd configuration ...
+    image: spotifyd/spotifyd:latest
+    network_mode: "host"
+    volumes:
+      - ./spotifyd.conf:/etc/spotifyd.conf
+      - spotifyd-cache:/var/cache/spotifyd
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /dev/snd:/dev/snd
+    restart: unless-stopped
 
   spotify-splitter:
     build: .
@@ -187,10 +199,18 @@ services:
     network_mode: "host"
     depends_on:
       - spotifyd
+    env_file:
+      - .env
     volumes:
-      - /path/on/host/to/downloads:/downloads
+      - "${MUSIC_PATH}:/Music"
+      - "${BEETS_CONFIG_PATH}:/root/.config/beets"
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /dev/snd:/dev/snd
     restart: unless-stopped
 ```
+
+A complete Compose file integrating Spotify Splitter with a typical *arr stack
+can be found at `docs/arr-example-dockerfile`.
 
 Set `OUTPUT_DIR` inside `spotify-splitter` to `/downloads/spotify_rips` and
 configure Lidarr to monitor the same path. When new files appear, Lidarr will
