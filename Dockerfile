@@ -8,11 +8,12 @@ RUN apt-get update && apt-get install -y \
     portaudio19-dev \
     pulseaudio-utils \
     git \
+    cron \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN pip install poetry
+# Install Poetry and Beets
+RUN pip install poetry beets
 
 # Set up the work directory
 WORKDIR /app
@@ -27,5 +28,8 @@ RUN poetry config virtualenvs.in-project true && \
 # Copy the rest of your application code
 COPY . .
 
+# Add entrypoint script
+RUN chmod +x /app/start.sh
+
 # This is the command that will run when the container starts
-CMD ["poetry", "run", "spotify-splitter", "record"]
+CMD ["/app/start.sh"]
