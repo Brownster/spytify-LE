@@ -8,6 +8,8 @@ services:
     volumes:
       - ./spotifyd.conf:/etc/spotifyd.conf
       - spotifyd-cache:/var/cache/spotifyd
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /dev/snd:/dev/snd
     restart: unless-stopped
 
   spotify-splitter:
@@ -21,6 +23,8 @@ services:
     volumes:
       - "${MUSIC_PATH}:/Music"
       - "${BEETS_CONFIG_PATH}:/root/.config/beets"
+      - /run/user/1000/pulse:/run/user/1000/pulse
+      - /dev/snd:/dev/snd
     restart: unless-stopped
 
 volumes:
