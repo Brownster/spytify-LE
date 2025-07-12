@@ -89,7 +89,7 @@ def record(ctx: typer.Context):
                 def on_change(track):
                     manager.start_track(track)
                     if manager.current:
-                        spinner.text = f"Recording: [bold cyan]{track.artist} – {track.title}[/]"
+                        spinner.text = f"[green]Recording:[/] [bold cyan]{track.artist} – {track.title}[/]"
                     else:
                         spinner.text = "Skipping ad..."
 
@@ -100,7 +100,7 @@ def record(ctx: typer.Context):
                     elif status == "Playing":
                         manager.resume_recording()
                         if manager.current:
-                            spinner.text = f"Recording: [bold cyan]{manager.current.artist} – {manager.current.title}[/]"
+                            spinner.text = f"[green]Recording:[/] [bold cyan]{manager.current.artist} – {manager.current.title}[/]"
                         else:
                             spinner.text = "Waiting for track change..."
 
