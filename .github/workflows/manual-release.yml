@@ -17,7 +17,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TAG: v${{ github.event.inputs.version }}
-      IMAGE: ghcr.io/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v4
@@ -47,6 +46,8 @@ jobs:
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Set container image name
+        run: echo "IMAGE=ghcr.io/$(echo $GITHUB_REPOSITORY | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
       - name: Build & push image
         uses: docker/build-push-action@v6
         with:
