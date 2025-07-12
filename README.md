@@ -74,6 +74,77 @@ poetry run spotify-splitter --output ~/Music/Rips --format flac record
 
 Use `--help` to view available options.
 
+## Post-Processing with Beets (Recommended)
+
+This tool is designed to produce raw track rips. For the best results,
+install [Beets](https://beets.io/) to automatically tag and organize your
+music library.
+
+### 1. Install Beets
+
+```bash
+pip install beets
+```
+
+### 2. Configure Beets
+
+Create a configuration file at `~/.config/beets/config.yaml` with the
+following content to enable album art fetching and define your music
+directory:
+
+```yaml
+# ~/.config/beets/config.yaml
+directory: ~/Music
+library: ~/.config/beets/musiclibrary.db
+
+plugins: fetchart
+
+fetchart:
+    cautious: true
+    sources:
+      - coverartarchive
+      - albumartexchange
+      - amazon
+```
+
+### 3. Rip and Import
+
+With Beets configured, your workflow becomes two steps:
+
+1. Record tracks using Spotify Splitter, specifying a separate output
+   directory for the raw rips:
+
+   ```bash
+   poetry run spotify-splitter --output ~/Music/SpotifyRips record
+   ```
+
+2. Import the new rips with Beets:
+
+   ```bash
+   beet import -i ~/Music/SpotifyRips
+   ```
+
+Beets will fetch metadata and artwork and move the files into your main
+`~/Music` library, asking you to confirm matches along the way.
+
+### Import Without Moving (Optional)
+
+If you want to keep the default `~/Music` location and only tag files in
+place, run:
+
+```bash
+beet import -AW ~/Music
+```
+
+The `-A` flag avoids copying or moving files while `-W` writes the updated
+metadata. To skip files you've already imported, enable incremental mode in
+your configuration:
+
+```yaml
+import:
+  incremental: true
+```
+
 ## Troubleshooting
 
 If you see an error like `ValueError: No input device matching` when starting a
