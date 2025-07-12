@@ -42,10 +42,12 @@ for headless operation.
    Open the `.env` file and set `MUSIC_PATH` to the folder where ripped tracks
    should be saved. By default this points to a `Music` directory inside the
    project.
-4. **Configure Beets**
-   The container runs `beet import -AW /Music` on a schedule. Set
-   `BEETS_CRON_SCHEDULE` in `.env` to control how often the import runs and
-   edit files under `./beets` to customise the configuration.
+4. **Configure Beets (optional)**
+   The container can automatically run `beet import -AW /Music` on a schedule.
+   Set `BEETS_CRON_SCHEDULE` in `.env` to control how often the import runs and
+   edit files under `./beets` to customise the configuration. If you plan to use
+   Lidarr instead, set `INSTALL_BEETS=false` in `.env` and remove the Beets
+   volume mapping from the Compose file before building.
 5. **Expose your audio devices**
    Both containers need access to the host PulseAudio or PipeWire socket in
    order to play and capture audio. Mount `/run/user/1000/pulse` (or the
@@ -194,13 +196,18 @@ services:
     restart: unless-stopped
 
   spotify-splitter:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_BEETS: ${INSTALL_BEETS}
     container_name: spotify-splitter
     network_mode: "host"
     depends_on:
       - spotifyd
     env_file:
       - .env
+    environment:
+      INSTALL_BEETS: ${INSTALL_BEETS}
     volumes:
       - "${MUSIC_PATH}:/Music"
       - "${BEETS_CONFIG_PATH}:/root/.config/beets"
