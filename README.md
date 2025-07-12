@@ -23,14 +23,26 @@ poetry install
 
 ### Docker Compose
 
-Alternatively, you can run the project using Docker Compose. Copy `spotifyd.conf`
-and edit it with your Spotify credentials, then start the stack:
+Alternatively, you can run the project using Docker Compose. This is recommended
+for headless operation.
 
-```bash
-docker-compose up --build
-```
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/Brownster/spoti2.git
+   cd spoti2
+   ```
+2. **Configure `spotifyd`**
+   Edit the `spotifyd.conf` file and enter your Spotify Premium credentials.
+3. **Configure your music directory**
+   Open the `.env` file and set `MUSIC_PATH` to the folder where ripped tracks
+   should be saved. By default this points to a `Music` directory inside the
+   project.
+4. **Run the services**
+   ```bash
+   docker-compose up --build -d
+   ```
 
-Recorded tracks will be saved to `./Music` on the host.
+Recorded tracks will be saved to the path specified by `MUSIC_PATH`.
 
 ## Features
 
