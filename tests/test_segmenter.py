@@ -30,7 +30,7 @@ def test_segment_manager_flush(monkeypatch, tmp_path):
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
 
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
     manager.start_track(track)
     manager.add_frames(np.zeros((2, 2), dtype="float32"))
     manager.flush()
@@ -43,7 +43,7 @@ def test_pause_resume(monkeypatch, tmp_path):
     SegmentManager = segmenter.SegmentManager
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
     manager.start_track(track)
     manager.add_frames(np.ones((2, 2), dtype="float32"))
     manager.pause_recording()
@@ -62,7 +62,7 @@ def test_skip_ad(monkeypatch, tmp_path):
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
 
-    ad = TrackInfo("AdArtist", "AdTitle", "AdAlbum", None, "spotify:ad:123", None)
+    ad = TrackInfo("AdArtist", "AdTitle", "AdAlbum", None, "spotify:ad:123", None, 0)
     manager.start_track(ad)
     manager.add_frames(np.ones((2, 2), dtype="float32"))
     manager.flush()
@@ -79,9 +79,9 @@ def test_only_complete_tracks_saved(monkeypatch, tmp_path):
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t.title))
 
-    t1 = TrackInfo("A1", "T1", "Al1", None, "spotify:track:1", 1)
-    t2 = TrackInfo("A2", "T2", "Al2", None, "spotify:track:2", 2)
-    t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3)
+    t1 = TrackInfo("A1", "T1", "Al1", None, "spotify:track:1", 1, 0)
+    t2 = TrackInfo("A2", "T2", "Al2", None, "spotify:track:2", 2, 0)
+    t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3, 0)
 
     manager.start_track(t1)
     manager.add_frames(np.ones((2, 2), dtype="float32"))
@@ -93,11 +93,35 @@ def test_only_complete_tracks_saved(monkeypatch, tmp_path):
     assert exported == ["T2"]
 
 
+def test_incomplete_track_discarded(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    exported = []
+    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t.title))
+
+    t1 = TrackInfo("A1", "T1", "Al1", None, "spotify:track:1", 1, 0)
+    t2 = TrackInfo("A2", "T2", "Al2", None, "spotify:track:2", 2, 5_000_000)
+    t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3, 0)
+
+    manager.start_track(t1)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.start_track(t2)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.start_track(t3)
+    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.flush()
+
+    assert exported == ["T3"]
+
+
 def test_is_song_new_format(monkeypatch):
     """Track IDs starting with '/com/spotify/track/' are considered songs."""
     segmenter = load_segmenter(monkeypatch)
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1)
+    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1, 0)
     assert segmenter.is_song(song)
 
 
@@ -107,7 +131,7 @@ def test_float_export_not_distorted(monkeypatch, tmp_path):
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1)
+    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1, 0)
 
     t = np.linspace(0, 1, manager.samplerate, endpoint=False)
     sine = 0.5 * np.sin(2 * np.pi * 440 * t)

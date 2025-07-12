@@ -45,6 +45,7 @@ class SegmentManager:
         self.current: Optional[TrackInfo] = None
         self.recording = True
         self.is_first_track = True
+        self.current_complete = True
 
     def pause_recording(self) -> None:
         """Stop accepting new frames until resumed."""
@@ -73,15 +74,20 @@ class SegmentManager:
         if is_song(track):
             self.current = track
             self.recording = True
+            self.current_complete = track.position <= 2_000_000
             logger.info("▶ Recording: %s – %s", track.artist, track.title)
         else:
             # Treat ads as gaps; frames will be ignored until the next track
             self.current = None
+            self.current_complete = False
             self.recording = False
             logger.info("⏩ Ad detected, skipping recording")
 
     def flush(self) -> None:
         if not self.current or not self.buffer:
+            return
+        if not self.current_complete:
+            self.buffer.clear()
             return
         raw = np.concatenate(self.buffer)
         self._export(raw, self.current)
