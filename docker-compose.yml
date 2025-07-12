@@ -19,7 +19,8 @@ services:
     env_file:
       - .env
     volumes:
-      - "${MUSIC_PATH}:/root/Music"
+      - "${MUSIC_PATH}:/Music"
+      - "${BEETS_CONFIG_PATH}:/root/.config/beets"
     restart: unless-stopped
 
 volumes:

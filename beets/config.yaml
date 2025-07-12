@@ -1,0 +1,14 @@
+directory: /Music
+library: /root/.config/beets/musiclibrary.db
+
+import:
+  incremental: true
+
+plugins: fetchart
+
+fetchart:
+    cautious: true
+    sources:
+      - coverartarchive
+      - albumartexchange
+      - amazon

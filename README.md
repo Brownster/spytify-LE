@@ -40,7 +40,11 @@ for headless operation.
    Open the `.env` file and set `MUSIC_PATH` to the folder where ripped tracks
    should be saved. By default this points to a `Music` directory inside the
    project.
-4. **Run the services**
+4. **Configure Beets**
+   The container runs `beet import -AW /Music` on a schedule. Set
+   `BEETS_CRON_SCHEDULE` in `.env` to control how often the import runs and
+   edit files under `./beets` to customise the configuration.
+5. **Run the services**
    ```bash
    docker-compose up --build -d
    ```
