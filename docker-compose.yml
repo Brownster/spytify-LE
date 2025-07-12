@@ -13,13 +13,18 @@ services:
     restart: unless-stopped
 
   spotify-splitter:
-    build: .
+    build:
+      context: .
+      args:
+        INSTALL_BEETS: ${INSTALL_BEETS}
     container_name: spotify-splitter
     network_mode: "host"
     depends_on:
       - spotifyd
     env_file:
       - .env
+    environment:
+      INSTALL_BEETS: ${INSTALL_BEETS}
     volumes:
       - "${MUSIC_PATH}:/Music"
       - "${BEETS_CONFIG_PATH}:/root/.config/beets"

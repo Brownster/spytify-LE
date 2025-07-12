@@ -12,8 +12,13 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     rm -rf /var/lib/apt/lists/*
 
-# Install Poetry and Beets
-RUN pip install poetry beets
+# Optionally install Beets
+ARG INSTALL_BEETS=true
+RUN if [ "$INSTALL_BEETS" = "true" ]; then \
+        pip install poetry beets; \
+    else \
+        pip install poetry; \
+    fi
 
 # Set up the work directory
 WORKDIR /app
