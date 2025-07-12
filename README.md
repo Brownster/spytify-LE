@@ -10,6 +10,9 @@ This project records Spotify playback on Linux and saves each track as an indivi
 - [Poetry](https://python-poetry.org/) installed
 - Python 3.10– <4.0
 - `python3-pyaudio` installed (system package)
+- `ffmpeg` installed (system package)
+
+ffmpeg is required for converting audio during export and when running tests.
 
 ## Installation
 
