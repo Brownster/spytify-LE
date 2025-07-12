@@ -1,7 +1,7 @@
 # Use a specific Python version that you know works
 FROM python:3.12-slim
 
-# Install system dependencies needed by your script and spotifyd
+# Install system dependencies needed by this script and spotifyd
 # `portaudio19-dev` is needed by sounddevice/pyaudio
 # `pulseaudio-utils` contains `pactl`
 RUN apt-get update && apt-get install -y \
