@@ -27,7 +27,7 @@ def test_cli_help(monkeypatch):
     from spotify_splitter.main import app
 
     runner = CliRunner()
-    result = runner.invoke(app, ["record", "--help"])
+    result = runner.invoke(app, ["record", "--help"], env={"COLUMNS": "80"})
     assert result.exit_code == 0
     assert "Start recording until interrupted" in result.output
     assert "--player" in result.output
