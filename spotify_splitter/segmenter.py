@@ -97,7 +97,11 @@ class SegmentManager:
                 self.current = track
                 self.recording = True
                 self.current_complete = track.position <= 2_000_000
-                logger.info("▶ Recording: %s – %s", track.artist, track.title)
+                logger.info(
+                    "▶ [green]Recording:[/] [cyan]%s – %s[/]",
+                    track.artist,
+                    track.title,
+                )
         else:
             # Treat ads as gaps; frames will be ignored until the next track
             self.current = None
