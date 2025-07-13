@@ -8,7 +8,7 @@ from typing import List, Optional, Iterable
 
 import numpy as np
 from pydub import AudioSegment
-from pydub.silence import split_on_silence
+from pydub.silence import split_on_silence, detect_silence
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import APIC, ID3
 import requests
@@ -113,7 +113,7 @@ class SegmentManager:
         self.continuous_buffer += segment
 
     def process_segments(self) -> None:
-        """Process the first complete segment if available."""
+        """Process the first complete segment using a tiered strategy."""
         if len(self.track_markers) < 2:
             return
 
@@ -130,18 +130,47 @@ class SegmentManager:
 
         logger.info("Processing segment for: %s", start_marker.track_info.title)
 
-        chunks = split_on_silence(
-            search_window,
-            min_silence_len=700,
-            silence_thresh=-35,
-            keep_silence=250,
-        )
+        expected_duration_ms = getattr(start_marker.track_info, "duration_ms", 0)
+        song_chunk: Optional[AudioSegment] = None
 
-        if not chunks:
-            logger.warning("Could not find any audio chunks in the segment.")
-        else:
-            song_chunk = max(chunks, key=len)
-            self._export(song_chunk, start_marker.track_info)
+        # --- Strategy A: Smart Split ---
+        logger.debug("Attempting smart split with duration validation...")
+        chunks = split_on_silence(
+            search_window, min_silence_len=700, silence_thresh=-40, keep_silence=100
+        )
+        if chunks:
+            best_chunk = max(chunks, key=len)
+            duration_ratio = len(best_chunk) / expected_duration_ms if expected_duration_ms > 0 else 0
+            if expected_duration_ms == 0 or (0.95 < duration_ratio < 1.15):
+                logger.debug("Smart split successful. Chunk duration is valid.")
+                song_chunk = best_chunk
+            else:
+                logger.warning(
+                    "Smart split found a chunk of unexpected length (found %dms, expected %dms). Proceeding to next strategy.",
+                    len(best_chunk), expected_duration_ms,
+                )
+
+        # --- Strategy B: Targeted Silence Search Near End ---
+        if song_chunk is None and expected_duration_ms > 0:
+            logger.debug("Attempting targeted silence search near expected end...")
+            search_zone_start = max(0, expected_duration_ms - 2000)
+            search_zone = search_window[search_zone_start:]
+            silence = detect_silence(search_zone, min_silence_len=500, silence_thresh=-40)
+            if silence:
+                cut_point = search_zone_start + silence[0][0]
+                song_chunk = search_window[:cut_point]
+                logger.debug("Targeted search successful. Found silence at %dms.", cut_point)
+            else:
+                logger.warning("No silence found in targeted search zone.")
+
+        # --- Strategy C: Failsafe Hard Cut ---
+        if song_chunk is None:
+            logger.warning(
+                "All silence detection failed. Falling back to hard cut at metadata event time."
+            )
+            song_chunk = search_window
+
+        self._export(song_chunk, start_marker.track_info)
 
         self.continuous_buffer = self.continuous_buffer[end_marker.timestamp :]
         self.track_markers = [

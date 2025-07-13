@@ -41,10 +41,10 @@ def test_process_segments(monkeypatch, tmp_path):
     frames2 = np.ones((100, 2), dtype="float32")
     audio_q.put(frames1)
     manager._ingest_audio()
-    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0)))
+    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0, 0)))
     audio_q.put(frames2)
     manager._ingest_audio()
-    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T2", "Al", None, "spotify:track:2", 2, 0)))
+    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T2", "Al", None, "spotify:track:2", 2, 0, 0)))
 
     manager.process_segments()
     assert exported == ["T1"]
@@ -53,7 +53,7 @@ def test_process_segments(monkeypatch, tmp_path):
 def test_is_song_new_format(monkeypatch):
     segmenter = load_segmenter(monkeypatch)
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1, 0)
+    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1, 0, 0)
     assert segmenter.is_song(song)
 
 
@@ -63,7 +63,7 @@ def test_float_export_not_distorted(monkeypatch, tmp_path):
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
-    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1, 0)
+    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1, 0, 0)
 
     t = np.linspace(0, 1, manager.samplerate, endpoint=False)
     sine = 0.5 * np.sin(2 * np.pi * 440 * t)
@@ -94,7 +94,7 @@ def test_skip_existing_file(monkeypatch, tmp_path):
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0)
 
     existing = manager._get_track_path(track)
     existing.parent.mkdir(parents=True, exist_ok=True)
