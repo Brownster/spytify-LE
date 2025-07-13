@@ -84,11 +84,11 @@ def test_only_complete_tracks_saved(monkeypatch, tmp_path):
     t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3, 0)
 
     manager.start_track(t1)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.add_frames(np.ones((manager.samplerate, 2), dtype="float32"))
     manager.start_track(t2)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
     manager.start_track(t3)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
 
     assert exported == ["T2"]
 
@@ -107,11 +107,11 @@ def test_incomplete_track_discarded(monkeypatch, tmp_path):
     t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3, 0)
 
     manager.start_track(t1)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.add_frames(np.ones((manager.samplerate, 2), dtype="float32"))
     manager.start_track(t2)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
     manager.start_track(t3)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
+    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
     manager.flush()
 
     assert exported == ["T3"]
