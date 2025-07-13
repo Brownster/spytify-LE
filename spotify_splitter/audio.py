@@ -1,6 +1,7 @@
 import sounddevice as sd
 import numpy as np
 from queue import Queue, Full
+from typing import Optional
 import logging
 
 logger = logging.getLogger(__name__)
@@ -9,8 +10,8 @@ logger = logging.getLogger(__name__)
 class AudioStream:
     """Continuously capture audio from a PipeWire/PulseAudio monitor."""
 
-    def __init__(self, monitor_name: str, samplerate: int = 44100, channels: int = 2):
-        self.q: Queue[np.ndarray] = Queue(maxsize=20)
+    def __init__(self, monitor_name: str, samplerate: int = 44100, channels: int = 2, q: Optional[Queue] = None):
+        self.q: Queue[np.ndarray] = q or Queue(maxsize=20)
 
         def _open(device):
             return sd.InputStream(

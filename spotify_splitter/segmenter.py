@@ -1,22 +1,37 @@
+from __future__ import annotations
+
 from pathlib import Path
+from collections import namedtuple
+import logging
+import queue
+from typing import List, Optional, Iterable
+
+import numpy as np
 from pydub import AudioSegment
+from pydub.silence import split_on_silence
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import APIC, ID3
-import mutagen
-import numpy as np
 import requests
-import logging
-from typing import List, Optional
 
 from .mpris import TrackInfo
 
-def is_song(track: TrackInfo) -> bool:
-    """Return ``True`` if ``track`` looks like a real Spotify song.
 
-    Ads usually expose a non standard ``mpris:trackid`` or omit it entirely.
-    A genuine track will usually have a URI starting with ``spotify:track:`` or
-    a D-Bus object path starting with ``/com/spotify/track/``.
-    """
+logger = logging.getLogger(__name__)
+
+OUTPUT_DIR = Path.home() / "Music"
+
+
+# ---------------------------------------------------------------------------
+# Helper functions
+# ---------------------------------------------------------------------------
+
+def sanitize(name: str) -> str:
+    """Return a filesystem-safe version of *name*."""
+    return "".join(c for c in name if c not in r'/\\:*?"<>|')
+
+
+def is_song(track: TrackInfo) -> bool:
+    """Return ``True`` if ``track`` looks like a real Spotify song."""
     if not track or not track.id:
         return False
     track_id_str = str(track.id)
@@ -24,39 +39,121 @@ def is_song(track: TrackInfo) -> bool:
         "/com/spotify/track/"
     )
 
-logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path.home() / "Music"
+# ---------------------------------------------------------------------------
+# Core classes
+# ---------------------------------------------------------------------------
 
-
-def sanitize(name: str) -> str:
-    """Return a filesystem-safe version of *name*."""
-    return "".join(c for c in name if c not in r'/\\:*?"<>|')
+TrackMarker = namedtuple("TrackMarker", "timestamp track_info")
 
 
 class SegmentManager:
-    """Buffer audio frames and export them per track."""
+    """Processes a continuous audio stream to find and export complete tracks."""
 
-    def __init__(self, samplerate: int = 44100, output_dir: Path = OUTPUT_DIR, fmt: str = "mp3"):
+    def __init__(
+        self,
+        samplerate: int = 44100,
+        output_dir: Path = OUTPUT_DIR,
+        fmt: str = "mp3",
+        audio_queue: Optional[queue.Queue] = None,
+        event_queue: Optional[queue.Queue] = None,
+    ) -> None:
         self.samplerate = samplerate
         self.output_dir = output_dir
         self.format = fmt
-        self.buffer: List[np.ndarray] = []
-        self.current: Optional[TrackInfo] = None
-        self.recording = True
-        self.is_first_track = True
-        self.current_complete = True
-        # defer flushing the old track for a short period so any queued
-        # frames are not lost when a track change event arrives slightly
-        # early. ``transition_seconds`` defines how long to keep recording
-        # the previous track after a change.
-        self.transition_seconds = 2.0
-        self._transition_pending = False
-        self._next_track: Optional[TrackInfo] = None
-        self._frames_after_change = 0
+        self.audio_queue = audio_queue
+        self.event_queue = event_queue
+
+        self.continuous_buffer = AudioSegment.empty()
+        self.track_markers: List[TrackMarker] = []
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def run(self) -> None:
+        """Main processing loop; consumes queues until shutdown."""
+        if self.audio_queue is None or self.event_queue is None:
+            raise RuntimeError("SegmentManager requires audio and event queues")
+
+        while True:
+            try:
+                event_type, data = self.event_queue.get(timeout=1.0)
+                if event_type == "shutdown":
+                    break
+                if event_type == "track_change":
+                    self._ingest_audio()
+                    marker = TrackMarker(len(self.continuous_buffer), data)
+                    self.track_markers.append(marker)
+                    logger.debug("Marker added for track: %s", data.title)
+                    self.process_segments()
+            except queue.Empty:
+                self._ingest_audio()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _ingest_audio(self) -> None:
+        """Pull all frames from ``audio_queue`` into the continuous buffer."""
+        if not self.audio_queue or self.audio_queue.empty():
+            return
+
+        segment = AudioSegment.empty()
+        while not self.audio_queue.empty():
+            frames = self.audio_queue.get_nowait()
+            int_samples = (frames * np.iinfo(np.int16).max).astype(np.int16)
+            seg = AudioSegment(
+                int_samples.tobytes(),
+                frame_rate=self.samplerate,
+                sample_width=2,
+                channels=frames.shape[1],
+            )
+            segment += seg
+        self.continuous_buffer += segment
+
+    def process_segments(self) -> None:
+        """Process the first complete segment if available."""
+        if len(self.track_markers) < 2:
+            return
+
+        start_marker = self.track_markers[0]
+        end_marker = self.track_markers[1]
+
+        search_window = self.continuous_buffer[start_marker.timestamp : end_marker.timestamp]
+
+        if not is_song(start_marker.track_info):
+            logger.debug("Previous item was not a song, skipping segment.")
+            self.continuous_buffer = self.continuous_buffer[end_marker.timestamp :]
+            self.track_markers.pop(0)
+            return
+
+        logger.info("Processing segment for: %s", start_marker.track_info.title)
+
+        chunks = split_on_silence(
+            search_window,
+            min_silence_len=700,
+            silence_thresh=-35,
+            keep_silence=250,
+        )
+
+        if not chunks:
+            logger.warning("Could not find any audio chunks in the segment.")
+        else:
+            song_chunk = max(chunks, key=len)
+            self._export(song_chunk, start_marker.track_info)
+
+        self.continuous_buffer = self.continuous_buffer[end_marker.timestamp :]
+        self.track_markers = [
+            marker._replace(timestamp=marker.timestamp - end_marker.timestamp)
+            for marker in self.track_markers[1:]
+        ]
+
+    # ------------------------------------------------------------------
+    # Export helpers
+    # ------------------------------------------------------------------
 
     def _get_track_path(self, t: TrackInfo) -> Path:
-        """Return the expected output path for *t*."""
         safe_artist = sanitize(t.artist)
         safe_album = sanitize(t.album)
         safe_title = sanitize(t.title)
@@ -70,142 +167,29 @@ class SegmentManager:
                 num_prefix = f"{t.track_number} - "
         return folder / f"{num_prefix}{safe_title}.{self.format}"
 
-    def pause_recording(self) -> None:
-        """Stop accepting new frames until resumed."""
-        logger.info("⏸️ Recording paused")
-        self.recording = False
-
-    def resume_recording(self) -> None:
-        """Resume accepting frames."""
-        logger.info("▶️ Recording resumed")
-        self.recording = True
-
-    def add_frames(self, frames: np.ndarray) -> None:
-        """Append audio *frames* to the buffer if a song is active."""
-        if self.current is not None and self.recording:
-            self.buffer.append(frames)
-        if self._transition_pending:
-            self._frames_after_change += frames.shape[0]
-            if self._frames_after_change >= int(self.transition_seconds * self.samplerate):
-                self._finalize_transition()
-
-    def start_track(self, track: TrackInfo) -> None:
-        """Begin buffering frames for ``track`` if it is not an advertisement."""
-        if self.current is None:
-            # nothing currently recording – start immediately
-            if is_song(track):
-                path = self._get_track_path(track)
-                if path.exists():
-                    logger.info("⏩ Track already recorded, skipping %s", path)
-                    self.current = None
-                    self.current_complete = False
-                    self.recording = False
-                else:
-                    self.current = track
-                    self.recording = True
-                    self.current_complete = track.position <= 2_000_000
-                    logger.info(
-                        "▶ [green]Recording:[/] [cyan]%s – %s[/]",
-                        track.artist,
-                        track.title,
-                    )
-            else:
-                self.current = None
-                self.current_complete = False
-                self.recording = False
-                logger.info("⏩ Ad detected, skipping recording")
-            return
-
-        # track change while recording
-        self._transition_pending = True
-        self._next_track = track
-        self._frames_after_change = 0
-
-    def flush(self) -> None:
-        if not self.current or not self.buffer:
-            return
-        if not self.current_complete:
-            self.buffer.clear()
-            return
-        raw = np.concatenate(self.buffer)
-        self._export(raw, self.current)
-        self.buffer.clear()
-
-    def _flush_with_cache(self, skip_export: bool = False) -> np.ndarray:
-        """Flush the current buffer returning the last portion for chaining."""
-        if not self.current or not self.buffer:
-            ch = self.buffer[0].shape[1] if self.buffer else 2
-            dt = self.buffer[0].dtype if self.buffer else np.float32
-            self.buffer.clear()
-            return np.empty((0, ch), dtype=dt)
-
-        raw = np.concatenate(self.buffer)
-        keep_samples = int(self.transition_seconds * self.samplerate)
-        if raw.shape[0] <= keep_samples:
-            cache = raw
-            segment = np.empty((0, raw.shape[1]), dtype=raw.dtype)
+    def _export(self, segment: Iterable | AudioSegment, track_info: TrackInfo) -> None:
+        """Export ``segment`` to disk and tag it with metadata."""
+        if isinstance(segment, np.ndarray):
+            if segment.dtype.kind == "f":
+                segment = np.clip(segment, -1.0, 1.0)
+                segment = (segment * np.iinfo(np.int16).max).astype(np.int16)
+            audio_segment = AudioSegment(
+                segment.tobytes(),
+                frame_rate=self.samplerate,
+                sample_width=2,
+                channels=segment.shape[1],
+            )
+        elif isinstance(segment, AudioSegment):
+            audio_segment = segment
         else:
-            cache = raw[-keep_samples:]
-            segment = raw[:-keep_samples]
+            raise TypeError("segment must be numpy array or AudioSegment")
 
-        if not skip_export and self.current_complete and segment.size:
-            self._export(segment, self.current)
-
-        self.buffer.clear()
-        return cache
-
-    def _finalize_transition(self) -> None:
-        cache = self._flush_with_cache(skip_export=self.is_first_track)
-        self.is_first_track = False
-
-        next_track = self._next_track
-        self._next_track = None
-        self._transition_pending = False
-
-        if next_track and is_song(next_track):
-            path = self._get_track_path(next_track)
-            if path.exists():
-                logger.info("⏩ Track already recorded, skipping %s", path)
-                self.current = None
-                self.current_complete = False
-                self.recording = False
-                self.buffer.clear()
-            else:
-                self.current = next_track
-                self.current_complete = next_track.position <= 2_000_000
-                self.recording = True
-                self.buffer = [cache] if cache.size else []
-                logger.info(
-                    "▶ [green]Recording:[/] [cyan]%s – %s[/]",
-                    next_track.artist,
-                    next_track.title,
-                )
-        else:
-            # ad or invalid track
-            self.current = None
-            self.current_complete = False
-            self.recording = False
-            self.buffer.clear()
-            logger.info("⏩ Ad detected, skipping recording")
-
-    def _export(self, segment: np.ndarray, t: TrackInfo) -> None:
-        if segment.dtype.kind == "f":
-            segment = np.clip(segment, -1.0, 1.0)
-            segment = (
-                segment * np.iinfo(np.int16).max
-            ).astype(np.int16)
-        audio_segment = AudioSegment(
-            segment.tobytes(),
-            frame_rate=self.samplerate,
-            sample_width=2,
-            channels=segment.shape[1],
-        )
-
-        path = self._get_track_path(t)
+        path = self._get_track_path(track_info)
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             logger.info("File %s already exists, skipping export", path)
             return
+
         audio_segment.export(path, format=self.format, bitrate="320k")
 
         try:
@@ -213,11 +197,11 @@ class SegmentManager:
         except Exception:
             tags = EasyID3()
 
-        tags["artist"] = t.artist
-        tags["title"] = t.title
-        tags["album"] = t.album
-        if t.track_number:
-            tags["tracknumber"] = str(t.track_number)
+        tags["artist"] = track_info.artist
+        tags["title"] = track_info.title
+        tags["album"] = track_info.album
+        if track_info.track_number:
+            tags["tracknumber"] = str(track_info.track_number)
         tags.save(path)
 
         try:
@@ -226,9 +210,9 @@ class SegmentManager:
             logger.warning("Could not load file for tagging: %s", e)
             return
 
-        if t.art_uri:
+        if track_info.art_uri:
             try:
-                img = requests.get(t.art_uri).content
+                img = requests.get(track_info.art_uri).content
                 audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
             except Exception as e:
                 logger.warning("Failed to download or embed cover art: %s", e)

@@ -2,6 +2,7 @@ import threading
 import logging
 from pathlib import Path
 import typer
+import queue
 
 from rich.live import Live
 from rich.spinner import Spinner
@@ -72,49 +73,38 @@ def record(
 
     out_dir = ctx.obj["output"]
     fmt = ctx.obj["format"]
-    manager = SegmentManager(info.samplerate, output_dir=Path(out_dir) if out_dir else OUTPUT_DIR, fmt=fmt)
+
+    audio_queue: queue.Queue = queue.Queue()
+    event_queue: queue.Queue = queue.Queue()
+
+    manager = SegmentManager(
+        samplerate=info.samplerate,
+        output_dir=Path(out_dir) if out_dir else OUTPUT_DIR,
+        fmt=fmt,
+        audio_queue=audio_queue,
+        event_queue=event_queue,
+    )
+
+    processing_thread = threading.Thread(target=manager.run, daemon=True)
 
     spinner = Spinner("dots", text="Waiting for track change...")
     live = Live(spinner, transient=True, refresh_per_second=10)
 
     try:
         with live:
-            # The ``AudioStream`` uses a high priority callback that places
-            # captured frames into an internal queue. A dedicated thread simply
-            # pulls from that queue and hands the data off to the segment
-            # manager. This avoids busy waiting and reduces the chance of
-            # buffer overruns.
             with AudioStream(
                 info.monitor_name,
                 samplerate=info.samplerate,
                 channels=info.channels,
-            ) as stream:
-
-                def audio_processor():
-                    """Continuously read frames from ``stream`` and buffer them."""
-                    while True:
-                        frames = stream.read()
-                        manager.add_frames(frames)
-
-                threading.Thread(target=audio_processor, daemon=True).start()
+                q=audio_queue,
+            ):
+                processing_thread.start()
 
                 def on_change(track):
-                    manager.start_track(track)
-                    if manager.current:
-                        spinner.text = f"[green]Recording:[/] [bold cyan]{track.artist} – {track.title}[/]"
-                    else:
-                        spinner.text = "Skipping ad..."
+                    event_queue.put(("track_change", track))
 
                 def on_status(status: str):
-                    if status == "Paused":
-                        manager.pause_recording()
-                        spinner.text = "[bold yellow]Paused[/]"
-                    elif status == "Playing":
-                        manager.resume_recording()
-                        if manager.current:
-                            spinner.text = f"[green]Recording:[/] [bold cyan]{manager.current.artist} – {manager.current.title}[/]"
-                        else:
-                            spinner.text = "Waiting for track change..."
+                    pass
 
                 track_events(
                     on_change,
@@ -123,9 +113,9 @@ def record(
                     player_name=player,
                 )
     except KeyboardInterrupt:
-        logging.info(
-            "Recording interrupted by user. The currently recording track will not be saved."
-        )
+        logging.info("Shutdown signal received, processing remaining tracks...")
+        event_queue.put(("shutdown", None))
+        processing_thread.join()
     finally:
         logging.info("Done.")
 
