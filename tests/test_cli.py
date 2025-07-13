@@ -1,5 +1,6 @@
 import sys
 import types
+import re
 from typer.testing import CliRunner
 import pytest
 
@@ -29,5 +30,11 @@ def test_cli_help(monkeypatch):
     runner = CliRunner()
     result = runner.invoke(app, ["record", "--help"], env={"COLUMNS": "80"})
     assert result.exit_code == 0
-    assert "Start recording until interrupted" in result.output
-    assert "--player" in result.output
+
+    # Strip ANSI escape sequences which may be present when color output is
+    # enabled in CI environments.
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+    output = ansi_escape.sub("", result.output)
+
+    assert "Start recording until interrupted" in output
+    assert "--player" in output
