@@ -46,6 +46,14 @@ class SegmentManager:
         self.recording = True
         self.is_first_track = True
         self.current_complete = True
+        # defer flushing the old track for a short period so any queued
+        # frames are not lost when a track change event arrives slightly
+        # early. ``transition_seconds`` defines how long to keep recording
+        # the previous track after a change.
+        self.transition_seconds = 2.0
+        self._transition_pending = False
+        self._next_track: Optional[TrackInfo] = None
+        self._frames_after_change = 0
 
     def _get_track_path(self, t: TrackInfo) -> Path:
         """Return the expected output path for *t*."""
@@ -76,38 +84,42 @@ class SegmentManager:
         """Append audio *frames* to the buffer if a song is active."""
         if self.current is not None and self.recording:
             self.buffer.append(frames)
+        if self._transition_pending:
+            self._frames_after_change += frames.shape[0]
+            if self._frames_after_change >= int(self.transition_seconds * self.samplerate):
+                self._finalize_transition()
 
     def start_track(self, track: TrackInfo) -> None:
         """Begin buffering frames for ``track`` if it is not an advertisement."""
-        if self.current is not None:
-            if self.is_first_track:
-                self.is_first_track = False
+        if self.current is None:
+            # nothing currently recording – start immediately
+            if is_song(track):
+                path = self._get_track_path(track)
+                if path.exists():
+                    logger.info("⏩ Track already recorded, skipping %s", path)
+                    self.current = None
+                    self.current_complete = False
+                    self.recording = False
+                else:
+                    self.current = track
+                    self.recording = True
+                    self.current_complete = track.position <= 2_000_000
+                    logger.info(
+                        "▶ [green]Recording:[/] [cyan]%s – %s[/]",
+                        track.artist,
+                        track.title,
+                    )
             else:
-                self.flush()
-        self.buffer.clear()
-
-        if is_song(track):
-            path = self._get_track_path(track)
-            if path.exists():
-                logger.info("⏩ Track already recorded, skipping %s", path)
                 self.current = None
                 self.current_complete = False
                 self.recording = False
-            else:
-                self.current = track
-                self.recording = True
-                self.current_complete = track.position <= 2_000_000
-                logger.info(
-                    "▶ [green]Recording:[/] [cyan]%s – %s[/]",
-                    track.artist,
-                    track.title,
-                )
-        else:
-            # Treat ads as gaps; frames will be ignored until the next track
-            self.current = None
-            self.current_complete = False
-            self.recording = False
-            logger.info("⏩ Ad detected, skipping recording")
+                logger.info("⏩ Ad detected, skipping recording")
+            return
+
+        # track change while recording
+        self._transition_pending = True
+        self._next_track = track
+        self._frames_after_change = 0
 
     def flush(self) -> None:
         if not self.current or not self.buffer:
@@ -118,6 +130,63 @@ class SegmentManager:
         raw = np.concatenate(self.buffer)
         self._export(raw, self.current)
         self.buffer.clear()
+
+    def _flush_with_cache(self, skip_export: bool = False) -> np.ndarray:
+        """Flush the current buffer returning the last portion for chaining."""
+        if not self.current or not self.buffer:
+            ch = self.buffer[0].shape[1] if self.buffer else 2
+            dt = self.buffer[0].dtype if self.buffer else np.float32
+            self.buffer.clear()
+            return np.empty((0, ch), dtype=dt)
+
+        raw = np.concatenate(self.buffer)
+        keep_samples = int(self.transition_seconds * self.samplerate)
+        if raw.shape[0] <= keep_samples:
+            cache = raw
+            segment = np.empty((0, raw.shape[1]), dtype=raw.dtype)
+        else:
+            cache = raw[-keep_samples:]
+            segment = raw[:-keep_samples]
+
+        if not skip_export and self.current_complete and segment.size:
+            self._export(segment, self.current)
+
+        self.buffer.clear()
+        return cache
+
+    def _finalize_transition(self) -> None:
+        cache = self._flush_with_cache(skip_export=self.is_first_track)
+        self.is_first_track = False
+
+        next_track = self._next_track
+        self._next_track = None
+        self._transition_pending = False
+
+        if next_track and is_song(next_track):
+            path = self._get_track_path(next_track)
+            if path.exists():
+                logger.info("⏩ Track already recorded, skipping %s", path)
+                self.current = None
+                self.current_complete = False
+                self.recording = False
+                self.buffer.clear()
+            else:
+                self.current = next_track
+                self.current_complete = next_track.position <= 2_000_000
+                self.recording = True
+                self.buffer = [cache] if cache.size else []
+                logger.info(
+                    "▶ [green]Recording:[/] [cyan]%s – %s[/]",
+                    next_track.artist,
+                    next_track.title,
+                )
+        else:
+            # ad or invalid track
+            self.current = None
+            self.current_complete = False
+            self.recording = False
+            self.buffer.clear()
+            logger.info("⏩ Ad detected, skipping recording")
 
     def _export(self, segment: np.ndarray, t: TrackInfo) -> None:
         if segment.dtype.kind == "f":
