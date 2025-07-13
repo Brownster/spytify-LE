@@ -1,8 +1,9 @@
 import sys
 import types
 import importlib
+import queue
+from pathlib import Path
 import numpy as np
-import pytest
 from pydub import AudioSegment
 
 
@@ -22,103 +23,34 @@ def test_sanitize(monkeypatch):
     assert segmenter.sanitize("AC/DC") == "ACDC"
 
 
-def test_segment_manager_flush(monkeypatch, tmp_path):
+def test_process_segments(monkeypatch, tmp_path):
     segmenter = load_segmenter(monkeypatch)
     SegmentManager = segmenter.SegmentManager
-    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    exported = []
-    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
-
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
-    manager.start_track(track)
-    manager.add_frames(np.zeros((2, 2), dtype="float32"))
-    manager.flush()
-
-    assert exported and exported[0].title == "Title"
-
-
-def test_pause_resume(monkeypatch, tmp_path):
-    segmenter = load_segmenter(monkeypatch)
-    SegmentManager = segmenter.SegmentManager
-    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
-    manager.start_track(track)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
-    manager.pause_recording()
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
-    manager.resume_recording()
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
-
-    assert len(manager.buffer) == 2
-
-
-def test_skip_ad(monkeypatch, tmp_path):
-    segmenter = load_segmenter(monkeypatch)
-    SegmentManager = segmenter.SegmentManager
-    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    exported = []
-    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t))
-
-    ad = TrackInfo("AdArtist", "AdTitle", "AdAlbum", None, "spotify:ad:123", None, 0)
-    manager.start_track(ad)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
-    manager.flush()
-
-    assert not exported
-
-
-def test_only_complete_tracks_saved(monkeypatch, tmp_path):
-    segmenter = load_segmenter(monkeypatch)
-    SegmentManager = segmenter.SegmentManager
+    TrackMarker = segmenter.TrackMarker
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    audio_q = queue.Queue()
+    event_q = queue.Queue()
+    manager = SegmentManager(44100, output_dir=tmp_path, fmt="wav", audio_queue=audio_q, event_queue=event_q)
+
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t.title))
+    monkeypatch.setattr(segmenter, "split_on_silence", lambda window, **kw: [window])
 
-    t1 = TrackInfo("A1", "T1", "Al1", None, "spotify:track:1", 1, 0)
-    t2 = TrackInfo("A2", "T2", "Al2", None, "spotify:track:2", 2, 0)
-    t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3, 0)
+    frames1 = np.zeros((100, 2), dtype="float32")
+    frames2 = np.ones((100, 2), dtype="float32")
+    audio_q.put(frames1)
+    manager._ingest_audio()
+    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0)))
+    audio_q.put(frames2)
+    manager._ingest_audio()
+    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T2", "Al", None, "spotify:track:2", 2, 0)))
 
-    manager.start_track(t1)
-    manager.add_frames(np.ones((manager.samplerate, 2), dtype="float32"))
-    manager.start_track(t2)
-    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
-    manager.start_track(t3)
-    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
-
-    assert exported == ["T2"]
-
-
-def test_incomplete_track_discarded(monkeypatch, tmp_path):
-    segmenter = load_segmenter(monkeypatch)
-    SegmentManager = segmenter.SegmentManager
-    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
-    exported = []
-    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t.title))
-
-    t1 = TrackInfo("A1", "T1", "Al1", None, "spotify:track:1", 1, 0)
-    t2 = TrackInfo("A2", "T2", "Al2", None, "spotify:track:2", 2, 5_000_000)
-    t3 = TrackInfo("A3", "T3", "Al3", None, "spotify:track:3", 3, 0)
-
-    manager.start_track(t1)
-    manager.add_frames(np.ones((manager.samplerate, 2), dtype="float32"))
-    manager.start_track(t2)
-    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
-    manager.start_track(t3)
-    manager.add_frames(np.ones((int(manager.samplerate * manager.transition_seconds) + 1, 2), dtype="float32"))
-    manager.flush()
-
-    assert exported == ["T3"]
+    manager.process_segments()
+    assert exported == ["T1"]
 
 
 def test_is_song_new_format(monkeypatch):
-    """Track IDs starting with '/com/spotify/track/' are considered songs."""
     segmenter = load_segmenter(monkeypatch)
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
     song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1, 0)
@@ -130,32 +62,28 @@ def test_float_export_not_distorted(monkeypatch, tmp_path):
     SegmentManager = segmenter.SegmentManager
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
     track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1, 0)
 
     t = np.linspace(0, 1, manager.samplerate, endpoint=False)
     sine = 0.5 * np.sin(2 * np.pi * 440 * t)
     frames = np.stack([sine, sine], axis=1).astype("float32")
 
+    captured = {}
+    def fake_export(self, path, format=None, bitrate=None):
+        captured['segment'] = self
+        Path(path).touch()
+
+    monkeypatch.setattr(AudioSegment, 'export', fake_export)
+
     manager._export(frames, track)
 
-    exported = tmp_path / "Artist" / "Album" / "01 - Tone.mp3"
+    exported = tmp_path / "Artist" / "Album" / "01 - Tone.wav"
     assert exported.exists()
 
+    out_arr = np.array(captured['segment'].get_array_of_samples()).reshape(-1, 2)
     ref = (np.clip(frames, -1.0, 1.0) * np.iinfo(np.int16).max).astype(np.int16)
-    ref_seg = AudioSegment(
-        ref.tobytes(),
-        frame_rate=manager.samplerate,
-        sample_width=2,
-        channels=2,
-    )
-    ref_path = tmp_path / "ref.mp3"
-    ref_seg.export(ref_path, format="mp3", bitrate="320k")
-
-    out = AudioSegment.from_file(exported)
-    ref_out = AudioSegment.from_file(ref_path)
-    out_arr = np.array(out.get_array_of_samples())
-    ref_arr = np.array(ref_out.get_array_of_samples())
+    ref_arr = ref.reshape(-1, 2)
     diff = np.mean(np.abs(out_arr - ref_arr))
     assert diff < 1
 
@@ -165,7 +93,7 @@ def test_skip_existing_file(monkeypatch, tmp_path):
     SegmentManager = segmenter.SegmentManager
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
-    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="mp3")
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
     track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0)
 
     existing = manager._get_track_path(track)
@@ -173,11 +101,8 @@ def test_skip_existing_file(monkeypatch, tmp_path):
     existing.touch()
 
     called = []
-    monkeypatch.setattr(manager, "_export", lambda seg, t: called.append(True))
+    monkeypatch.setattr(AudioSegment, "export", lambda *a, **k: called.append(True))
 
-    manager.start_track(track)
-    manager.add_frames(np.ones((2, 2), dtype="float32"))
-    manager.flush()
+    manager._export(np.ones((2, 2), dtype="float32"), track)
 
     assert not called
-    assert manager.current is None
