@@ -12,7 +12,7 @@ except Exception:  # pragma: no cover - fallback if gi is missing
 
 TrackInfo = namedtuple(
     "TrackInfo",
-    "artist title album art_uri id track_number position",
+    "artist title album art_uri id track_number position duration_ms",
 )
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,8 @@ def track_events(
                 position = spotify.Position
             except Exception:
                 position = 0
+            length = md.get("mpris:length")
+            duration_ms = int(length / 1000) if length else 0
             track = TrackInfo(
                 artist=md.get("xesam:artist", ["Unknown"])[0],
                 title=md.get("xesam:title", "Unknown"),
@@ -62,6 +64,7 @@ def track_events(
                 id=md.get("mpris:trackid"),
                 track_number=md.get("xesam:trackNumber"),
                 position=position,
+                duration_ms=duration_ms,
             )
             logger.debug("Track changed: %s - %s", track.artist, track.title)
             on_change(track)
