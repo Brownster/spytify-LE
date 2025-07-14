@@ -1,0 +1,88 @@
+# Standalone Spotify Splitter with integrated spotifyd
+FROM python:3.12-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # Audio system dependencies
+    portaudio19-dev \
+    pulseaudio \
+    pulseaudio-utils \
+    dbus \
+    dbus-x11 \
+    uuid-runtime \
+    # System utilities
+    procps \
+    wget \
+    curl \
+    git \
+    cron \
+    supervisor \
+    --no-install-recommends && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install spotifyd v0.4.1
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        curl -L https://github.com/Spotifyd/spotifyd/releases/download/v0.4.1/spotifyd-linux-x86_64-default.tar.gz \
+        | tar -xz -C /usr/local/bin/; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        curl -L https://github.com/Spotifyd/spotifyd/releases/download/v0.4.1/spotifyd-linux-aarch64-default.tar.gz \
+        | tar -xz -C /usr/local/bin/; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    chmod +x /usr/local/bin/spotifyd
+
+# Create user for audio services
+RUN useradd -m -s /bin/bash spotify && \
+    usermod -a -G audio spotify
+
+# Set up the work directory
+WORKDIR /app
+
+# Copy dependency files
+COPY poetry.lock pyproject.toml ./
+
+# Install Python dependencies
+RUN pip install poetry && \
+    poetry config virtualenvs.in-project true && \
+    poetry install --no-root --only=main
+
+# Copy application code
+COPY spotify_splitter/ ./spotify_splitter/
+COPY tests/ ./tests/
+COPY pyproject.toml ./
+
+# Install the application
+RUN poetry install --only=main
+
+# Create directories for configs and music
+RUN mkdir -p /config /Music /var/log/spotify-splitter && \
+    chown -R spotify:spotify /config /Music /var/log/spotify-splitter
+
+# Copy configuration and startup files
+COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/start-simple.sh /app/start-simple.sh
+COPY docker/spotifyd-template.conf /app/spotifyd-template.conf
+COPY docker/pulseaudio-init.sh /app/pulseaudio-init.sh
+
+# Make scripts executable
+RUN chmod +x /app/start-simple.sh /app/pulseaudio-init.sh
+
+# Default environment variables (credentials set at runtime)
+ENV SPOTIFY_DEVICE_NAME="Spotify-Headless"
+ENV SPOTIFY_BITRATE="320"
+ENV MUSIC_PATH="/Music"
+ENV VERBOSE="false"
+
+# Volume mounts
+VOLUME ["/config", "/Music"]
+
+# Expose any necessary ports (none needed for this app)
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD pgrep -f "spotify-splitter" && pgrep -f "spotifyd" || exit 1
+
+# Use supervisor to manage multiple processes
+CMD ["/app/start-simple.sh"]

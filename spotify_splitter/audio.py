@@ -10,8 +10,29 @@ logger = logging.getLogger(__name__)
 class AudioStream:
     """Continuously capture audio from a PipeWire/PulseAudio monitor."""
 
-    def __init__(self, monitor_name: str, samplerate: int = 44100, channels: int = 2, q: Optional[Queue] = None):
-        self.q: Queue[np.ndarray] = q or Queue(maxsize=20)
+    def __init__(
+        self,
+        monitor_name: str,
+        samplerate: int = 44100,
+        channels: int = 2,
+        q: Optional[Queue] = None,
+        queue_size: int = 200,
+        blocksize: Optional[int] = None,
+        latency: Optional[float] = None,
+        ui_callback: Optional[callable] = None,
+    ):
+        """Create a stream reading from ``monitor_name``.
+
+        ``queue_size`` determines how many blocks of audio are buffered before
+        old data is dropped. ``blocksize`` and ``latency`` are passed directly
+        to :class:`sounddevice.InputStream` to control callback timing.
+        
+        Increased default queue_size to 50 to prevent buffer underruns during
+        intensive track processing operations.
+        """
+
+        self.q: Queue[np.ndarray] = q or Queue(maxsize=queue_size)
+        self.ui_callback = ui_callback
 
         def _open(device):
             return sd.InputStream(
@@ -20,6 +41,8 @@ class AudioStream:
                 samplerate=samplerate,
                 dtype="float32",
                 callback=self._callback,
+                blocksize=blocksize or 2048,
+                latency=latency or 'high',
             )
 
         try:
@@ -52,10 +75,14 @@ class AudioStream:
     def _callback(self, indata, frames, time, status):
         if status:
             logger.warning("SoundDevice status: %s", status)
+            if self.ui_callback:
+                self.ui_callback("buffer_warning", None)
         try:
             self.q.put_nowait(indata.copy())
         except Full:
             logger.warning("Audio buffer full; dropping frames")
+            if self.ui_callback:
+                self.ui_callback("buffer_warning", None)
 
     def __enter__(self):
         self.stream.start()

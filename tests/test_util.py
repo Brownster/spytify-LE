@@ -130,6 +130,10 @@ def test_get_spotify_stream_info_sink_rate(monkeypatch):
         ("application.process.binary", "spotify"),
         ("pipewire.access.portal.app_id", "com.spotify.Client"),
         ("media.name", "Spotify"),
+        # spotifyd/librespot detection
+        ("application.name", "librespot"),
+        ("application.process.binary", "spotifyd"),
+        ("media.name", "Spotify endpoint"),
     ],
 )
 def test_is_spotify(monkeypatch, key, value):

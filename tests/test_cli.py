@@ -38,3 +38,6 @@ def test_cli_help(monkeypatch):
 
     assert "Start recording until interrupted" in output
     assert "--player" in output
+    assert "--queue-size" in output
+    assert "--blocksize" in output
+    assert "--latency" in output

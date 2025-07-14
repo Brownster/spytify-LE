@@ -35,7 +35,6 @@ def test_process_segments(monkeypatch, tmp_path):
 
     exported = []
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(t.title))
-    monkeypatch.setattr(segmenter, "split_on_silence", lambda window, **kw: [window])
 
     frames1 = np.zeros((100, 2), dtype="float32")
     frames2 = np.ones((100, 2), dtype="float32")

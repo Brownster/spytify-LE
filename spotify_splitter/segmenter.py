@@ -8,7 +8,6 @@ from typing import List, Optional, Iterable
 
 import numpy as np
 from pydub import AudioSegment
-from pydub.silence import split_on_silence, detect_silence
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import APIC, ID3
 import requests
@@ -57,15 +56,55 @@ class SegmentManager:
         fmt: str = "mp3",
         audio_queue: Optional[queue.Queue] = None,
         event_queue: Optional[queue.Queue] = None,
+        ui_callback: Optional[callable] = None,
     ) -> None:
         self.samplerate = samplerate
         self.output_dir = output_dir
         self.format = fmt
         self.audio_queue = audio_queue
         self.event_queue = event_queue
+        self.ui_callback = ui_callback
 
         self.continuous_buffer = AudioSegment.empty()
         self.track_markers: List[TrackMarker] = []
+        self.first_track_seen = False
+        
+    def flush_cache(self) -> None:
+        """Clear all cached data for clean startup."""
+        logger.debug("Flushing SegmentManager cache...")
+        self.continuous_buffer = AudioSegment.empty()
+        self.track_markers.clear()
+        self.first_track_seen = False
+        
+        # Clear audio queue if present
+        if self.audio_queue:
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except queue.Empty:
+                    break
+        
+        # Clear event queue if present  
+        if self.event_queue:
+            while not self.event_queue.empty():
+                try:
+                    self.event_queue.get_nowait()
+                except queue.Empty:
+                    break
+        logger.debug("Cache flush complete")
+        
+    def shutdown_cleanup(self) -> None:
+        """Clean shutdown - process any remaining tracks."""
+        logger.info("Starting shutdown cleanup...")
+        
+        # Process any remaining audio in queue
+        self._ingest_audio()
+        
+        # Process any pending segments
+        while len(self.track_markers) >= 2:
+            self.process_segments()
+            
+        logger.info("Shutdown cleanup complete")
 
     # ------------------------------------------------------------------
     # Public API
@@ -83,10 +122,19 @@ class SegmentManager:
                     break
                 if event_type == "track_change":
                     self._ingest_audio()
-                    marker = TrackMarker(len(self.continuous_buffer), data)
-                    self.track_markers.append(marker)
-                    logger.debug("Marker added for track: %s", data.title)
-                    self.process_segments()
+                    
+                    if not self.first_track_seen:
+                        logger.debug("First track seen: %s. Starting recording from next track.", data.title)
+                        self.first_track_seen = True
+                        # Clear buffer and start fresh
+                        self.continuous_buffer = AudioSegment.empty()
+                        marker = TrackMarker(0, data)
+                        self.track_markers = [marker]
+                    else:
+                        marker = TrackMarker(len(self.continuous_buffer), data)
+                        self.track_markers.append(marker)
+                        logger.debug("Marker added for track: %s", data.title)
+                        self.process_segments()
             except queue.Empty:
                 self._ingest_audio()
 
@@ -113,14 +161,12 @@ class SegmentManager:
         self.continuous_buffer += segment
 
     def process_segments(self) -> None:
-        """Process the first complete segment using a tiered strategy."""
+        """Process the first complete segment using timestamp-based cutting."""
         if len(self.track_markers) < 2:
             return
 
         start_marker = self.track_markers[0]
         end_marker = self.track_markers[1]
-
-        search_window = self.continuous_buffer[start_marker.timestamp : end_marker.timestamp]
 
         if not is_song(start_marker.track_info):
             logger.debug("Previous item was not a song, skipping segment.")
@@ -129,49 +175,48 @@ class SegmentManager:
             return
 
         logger.info("Processing segment for: %s", start_marker.track_info.title)
+        if self.ui_callback:
+            self.ui_callback("processing", start_marker.track_info)
 
+        # Simple timestamp-based cut
+        song_chunk = self.continuous_buffer[start_marker.timestamp : end_marker.timestamp]
+        
+        # Validate duration - must be within 4 seconds of expected
         expected_duration_ms = getattr(start_marker.track_info, "duration_ms", 0)
-        song_chunk: Optional[AudioSegment] = None
-
-        # --- Strategy A: Smart Split ---
-        logger.debug("Attempting smart split with duration validation...")
-        chunks = split_on_silence(
-            search_window, min_silence_len=700, silence_thresh=-40, keep_silence=100
-        )
-        if chunks:
-            best_chunk = max(chunks, key=len)
-            duration_ratio = len(best_chunk) / expected_duration_ms if expected_duration_ms > 0 else 0
-            if expected_duration_ms == 0 or (0.95 < duration_ratio < 1.15):
-                logger.debug("Smart split successful. Chunk duration is valid.")
-                song_chunk = best_chunk
-            else:
+        actual_duration_ms = len(song_chunk)
+        
+        if expected_duration_ms > 0:
+            duration_diff = abs(actual_duration_ms - expected_duration_ms)
+            if duration_diff > 4000:  # 4 seconds tolerance
                 logger.warning(
-                    "Smart split found a chunk of unexpected length (found %dms, expected %dms). Proceeding to next strategy.",
-                    len(best_chunk), expected_duration_ms,
+                    "Track duration mismatch too large (expected %dms, got %dms, diff %dms). Skipping save.",
+                    expected_duration_ms, actual_duration_ms, duration_diff
                 )
-
-        # --- Strategy B: Targeted Silence Search Near End ---
-        if song_chunk is None and expected_duration_ms > 0:
-            logger.debug("Attempting targeted silence search near expected end...")
-            search_zone_start = max(0, expected_duration_ms - 2000)
-            search_zone = search_window[search_zone_start:]
-            silence = detect_silence(search_zone, min_silence_len=500, silence_thresh=-40)
-            if silence:
-                cut_point = search_zone_start + silence[0][0]
-                song_chunk = search_window[:cut_point]
-                logger.debug("Targeted search successful. Found silence at %dms.", cut_point)
             else:
-                logger.warning("No silence found in targeted search zone.")
-
-        # --- Strategy C: Failsafe Hard Cut ---
-        if song_chunk is None:
-            logger.warning(
-                "All silence detection failed. Falling back to hard cut at metadata event time."
+                logger.debug(
+                    "Duration validation passed (expected %dms, got %dms, diff %dms)",
+                    expected_duration_ms, actual_duration_ms, duration_diff
+                )
+                # Export in background to reduce blocking
+                import threading
+                export_thread = threading.Thread(
+                    target=self._export,
+                    args=(song_chunk, start_marker.track_info),
+                    daemon=True
+                )
+                export_thread.start()
+        else:
+            logger.debug("No expected duration available, saving track")
+            # Export in background to reduce blocking
+            import threading
+            export_thread = threading.Thread(
+                target=self._export,
+                args=(song_chunk, start_marker.track_info),
+                daemon=True
             )
-            song_chunk = search_window
+            export_thread.start()
 
-        self._export(song_chunk, start_marker.track_info)
-
+        # Clean up buffer and markers
         self.continuous_buffer = self.continuous_buffer[end_marker.timestamp :]
         self.track_markers = [
             marker._replace(timestamp=marker.timestamp - end_marker.timestamp)
@@ -248,3 +293,6 @@ class SegmentManager:
 
         audio.save()
         logger.info("Saved %s", path)
+        # Notify UI of successful save
+        if hasattr(self, 'ui_callback') and self.ui_callback:
+            self.ui_callback("saved", track_info)

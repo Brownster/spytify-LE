@@ -2,63 +2,75 @@
 
 This project records Spotify playback on Linux and saves each track as an individual audio file with metadata.
 
-<img width="1508" height="717" alt="image" src="https://github.com/user-attachments/assets/8b02dc7c-4ef2-4916-8c4b-95ce27e7e2b6" />
-
+<img width="1863" height="217" alt="image" src="https://github.com/user-attachments/assets/d9344323-0293-4681-9761-9abfb30f2c28" />
 
 ## Prerequisites
 
 - Linux with PulseAudio or PipeWire
 - A running Spotify client
-- [Poetry](https://python-poetry.org/) installed
 - Python 3.10– <4.0
-- `python3-pyaudio` installed (system package)
-- `ffmpeg` installed (system package)
+- `python3-pyaudio` and `ffmpeg` (system packages)
+
+**For source installation only:**
+- [Poetry](https://python-poetry.org/) installed
 
 ffmpeg is required for converting audio during export and when running tests.
 
+Tested with flatpack official app
+
+https://flathub.org/apps/com.spotify.Client
+
 ## Installation
+
+### Option 1: Install from Release (Recommended)
+
+Download the latest `.whl` file from [GitHub Releases](https://github.com/Brownster/spoti2/releases) and install:
+
+```bash
+# Install system dependencies
+sudo apt install python3-pip python3-pyaudio ffmpeg  # Ubuntu/Debian
+# OR
+sudo dnf install python3-pip python3-pyaudio ffmpeg  # Fedora
+
+# Install spotify-splitter
+pip install --user spotify_splitter-0.1.0-py3-none-any.whl
+
+# Add to PATH if needed
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+After installation, you can run `spotify-splitter` from anywhere without `poetry run`.
+
+### Option 2: Install from Source
 
 ```bash
 git clone https://github.com/Brownster/spoti2.git
 cd spoti2
-sudo apt install python3-pyaudio
+sudo apt install python3-pyaudio ffmpeg
 poetry config virtualenvs.options.system-site-packages true
 poetry install
 ```
 
-### Docker Compose
+### With spotifyd (Headless)
 
-Alternatively, you can run the project using Docker Compose. This is recommended
-for headless operation.
+For headless operation, you can use [spotifyd](https://github.com/Spotifyd/spotifyd):
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/Brownster/spoti2.git
-   cd spoti2
+1. **Install spotifyd** (check your distribution's package manager)
+2. **Configure spotifyd** at `~/.config/spotifyd/spotifyd.conf`:
    ```
-2. **Configure `spotifyd`**
-   Edit the `spotifyd.conf` file and enter your Spotify Premium credentials.
-3. **Configure your music directory**
-   Open the `.env` file and set `MUSIC_PATH` to the folder where ripped tracks
-   should be saved. By default this points to a `Music` directory inside the
-   project.
-4. **Configure Beets (optional)**
-   The container can automatically run `beet import -AW /Music` on a schedule.
-   Set `BEETS_CRON_SCHEDULE` in `.env` to control how often the import runs and
-   edit files under `./beets` to customise the configuration. If you plan to use
-   Lidarr instead, set `INSTALL_BEETS=false` in `.env` and remove the Beets
-   volume mapping from the Compose file before building.
-5. **Expose your audio devices**
-   Both containers need access to the host PulseAudio or PipeWire socket in
-   order to play and capture audio. Mount `/run/user/1000/pulse` (or the
-   appropriate path for your user) and `/dev/snd` into the containers.
-   Example volume mappings are shown below.
-6. **Run the services**
-   ```bash
-   docker-compose up --build -d
+   [global]
+   username = "your_username"
+   password = "your_password"
+   device_name = "YourDevice"
+   backend = "pulseaudio"
+   volume_normalisation = true
+   bitrate = 320
    ```
-
-Recorded tracks will be saved to the path specified by `MUSIC_PATH`.
+3. **Start spotifyd**: `systemctl --user start spotifyd`
+4. **Run spotify-splitter**: 
+   - With wheel: `spotify-splitter --output ~/Music record --spotifyd-mode`
+   - With source: `poetry run spotify-splitter --output ~/Music record --spotifyd-mode`
 
 ## Features
 
@@ -74,25 +86,44 @@ Recorded tracks will be saved to the path specified by `MUSIC_PATH`.
 
 ## Usage
 
+### With Wheel Installation
 ```bash
+# Basic usage
+spotify-splitter record
+
+# Custom output directory and format
+spotify-splitter --output ~/Music/Rips --format flac record
+
+# Headless mode with spotifyd
+spotify-splitter record --spotifyd-mode
+```
+
+### With Source Installation
+```bash
+# Basic usage
 poetry run spotify-splitter record
+
+# Custom output directory and format
+poetry run spotify-splitter --output ~/Music/Rips --format flac record
+
+# Headless mode with spotifyd
+poetry run spotify-splitter record --spotifyd-mode
 ```
 
 By default, tracks are saved under `~/Music/<Artist>/<Album>/<Artist> - <Title>.mp3`.
 
-For a custom output directory and format:
-
-```bash
-poetry run spotify-splitter --output ~/Music/Rips --format flac record
-```
-
-To use the headless `spotifyd` client instead of the desktop app:
-
-```bash
-poetry run spotify-splitter record --player spotifyd
-```
-
 Use `--help` to view available options.
+
+If you notice occasional "input overflow" warnings in the logs, try
+increasing the audio buffer or adjusting the stream latency:
+
+```bash
+# With wheel installation
+spotify-splitter record --queue-size 50 --latency 0.1
+
+# With source installation
+poetry run spotify-splitter record --queue-size 50 --latency 0.1
+```
 
 ## Post-Processing with Beets (Optional we do add enough tag info to be imported ok into IPOD / MP3 player, Year and Genre will not be adeded by spoti2)
 
@@ -135,6 +166,10 @@ With Beets configured, your workflow becomes two steps:
    directory for the raw rips:
 
    ```bash
+   # With wheel installation
+   spotify-splitter --output ~/Music/SpotifyRips record
+   
+   # With source installation
    poetry run spotify-splitter --output ~/Music/SpotifyRips record
    ```
 
@@ -172,63 +207,7 @@ organization. Point Lidarr's "Manual Import" (Drone Factory) folder to the same
 directory used by `spotify-splitter` and it will automatically match tracks and
 move them into your music library.
 
-### Example Docker Compose
-
-```yaml
-version: '3.8'
-services:
-  lidarr:
-    image: lscr.io/linuxserver/lidarr:latest
-    container_name: lidarr
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Europe/London
-    volumes:
-      - ./lidarr_config:/config
-      - /path/on/host/to/your/music:/music
-      - /path/on/host/to/downloads:/downloads
-    ports:
-      - 8686:8686
-    restart: unless-stopped
-
-  spotifyd:
-    image: spotifyd/spotifyd:latest
-    network_mode: "host"
-    volumes:
-      - ./spotifyd.conf:/etc/spotifyd.conf
-      - spotifyd-cache:/var/cache/spotifyd
-      - /run/user/1000/pulse:/run/user/1000/pulse
-      - /dev/snd:/dev/snd
-    restart: unless-stopped
-
-  spotify-splitter:
-    build:
-      context: .
-      args:
-        INSTALL_BEETS: ${INSTALL_BEETS}
-    container_name: spotify-splitter
-    network_mode: "host"
-    depends_on:
-      - spotifyd
-    env_file:
-      - .env
-    environment:
-      INSTALL_BEETS: ${INSTALL_BEETS}
-    volumes:
-      - "${MUSIC_PATH}:/Music"
-      - "${BEETS_CONFIG_PATH}:/root/.config/beets"
-      - /run/user/1000/pulse:/run/user/1000/pulse
-      - /dev/snd:/dev/snd
-    restart: unless-stopped
-```
-
-A complete Compose file integrating Spotify Splitter with a typical *arr stack
-can be found at `docs/arr-example-dockerfile`.
-
-Set `OUTPUT_DIR` inside `spotify-splitter` to `/downloads/spotify_rips` and
-configure Lidarr to monitor the same path. When new files appear, Lidarr will
-import them, fetch metadata, and move them into your organized library.
+For integration with Lidarr, configure Lidarr to monitor the same directory used by `spotify-splitter`. When new files appear, Lidarr will import them, fetch metadata, and move them into your organized library.
 
 
 # Not using any post processing adding music folder to Strawberry
@@ -247,85 +226,53 @@ device's sample rate likely doesn't match Spotify's output. Verify that the
 selected monitor source uses the same sample rate reported by `pactl`.
 
 
-From Clicks to Code: Building a Headless Spotify Recorder
+## Technical Overview
 
-This project started with a simple, almost nostalgic idea: what if I could have a personal, offline copy of my Spotify playlists, just like the old days of curating an MP3 library? The manual process of recording and splitting tracks is tedious and error-prone. I wanted a tool that could do it for me, automatically and reliably. This is the story of building that tool, spotify-splitter.
-The Core Idea: Listen, Record, Split
+### Architecture and Design
 
-The initial concept was straightforward:
+Spotify Splitter is designed to solve the challenge of automated music archival from streaming services. The application leverages several key technologies to achieve reliable, high-quality audio capture and track segmentation on Linux systems.
 
-    Listen for what song is currently playing on Spotify.
+### Core Components
 
-    Record the system's audio output.
+**MPRIS Integration**
+The application utilizes the Media Player Remote Interfacing Specification (MPRIS) through D-Bus to monitor track metadata from Spotify clients. This standardized interface provides real-time access to track information including artist, title, album, and artwork URLs, enabling precise track boundaries and metadata tagging.
 
-    Split the recording into a new file every time the song changes.
+**Audio Capture System**
+Audio capture is implemented using PulseAudio/PipeWire monitor sources, which provide a lossless digital copy of the audio stream. The system employs the sounddevice library with PortAudio backend for consistent cross-platform audio handling, with automatic sample rate detection and buffer management to prevent audio dropouts.
 
-    Tag the file with the correct artist, title, and album information.
+**Signal Processing Pipeline**
+The audio processing pipeline handles format conversion from float32 to int16, implements configurable buffering strategies, and provides real-time audio level monitoring. The system includes overflow protection and dynamic latency adjustment to maintain audio quality under varying system loads.
 
-This simple idea, however, led to a fascinating journey through the layers of the Linux desktop stack.
-Getting the Data: MPRIS and D-Bus
+### Technical Challenges and Solutions
 
-The first challenge was getting the track information. How does a script know what Spotify is playing? The answer is MPRIS (Media Player Remote Interfacing Specification), a standard D-Bus interface. Most media players on Linux, including Spotify and spotifyd, use it to publish "Now Playing" information and accept commands like play, pause, and skip.
+**Data Type Compatibility**
+Early development revealed audio format mismatches between capture and export libraries. The solution involved implementing proper format conversion with scaling and type casting to ensure compatibility between sounddevice's float32 output and pydub's integer-based processing.
 
-Using the pydbus library, the script connects to the user's session D-Bus and listens for property changes from the org.mpris.MediaPlayer2.spotify service. This provides all the essential metadata: artist, title, album, and even a URL for the album art.
-Capturing the Audio: The Invisible Microphone
+**Track Boundary Detection**
+Accurate track splitting required developing a timestamp-based segmentation system that monitors MPRIS metadata changes while maintaining audio continuity. The system includes validation logic to ensure complete track capture and duration verification against expected track lengths.
 
-With the metadata sorted, the next step was to capture the audio. The most robust way to do this on a modern Linux system is to record from a monitor source. A monitor source is a virtual input device that mirrors a real output device. In simple terms, it's an invisible microphone listening directly to what your speakers or headphones are playing.
+**System Integration**
+The application handles the complexity of Linux audio systems by implementing automatic device detection for both PulseAudio and PipeWire environments. This includes dynamic monitor source discovery and sample rate adaptation for different audio configurations.
 
-The sounddevice library proved perfect for this. It provides a clean interface to the underlying PortAudio library. By using pactl (the PulseAudio/PipeWire command-line tool) to find the name of Spotify's monitor source, we could tell sounddevice exactly which stream to record.
-The First Major Bug: The Wall of Noise
+### Production Considerations
 
-The initial recordings were a success... in that they created files. The audio itself was a horrifying, distorted mess of static. After some excellent debugging help, the culprit was found: a fundamental data type mismatch.
+**Reliability Features**
+- Incomplete track detection prevents partial file saves
+- Advertisement filtering using track metadata analysis
+- Duplicate detection to avoid re-recording existing tracks
+- Automatic cache management for long-running sessions
 
-    sounddevice was capturing high-precision float32 audio samples (where values range from -1.0 to 1.0).
+**Performance Optimizations**
+- Configurable buffer sizes for different system capabilities
+- Threaded audio processing to prevent blocking
+- Memory-efficient streaming for extended recording sessions
+- Adaptive latency control for various hardware configurations
 
-    pydub, the library used for exporting the MP3, was being told to interpret the raw bytes of those floats as if they were 32-bit integers.
+**Headless Operation**
+Integration with spotifyd enables automated recording for server deployments, with optimized buffer management and error recovery suitable for unattended operation.
 
-The solution was to convert the audio format before exporting. By scaling the float values and converting them to standard 16-bit integers, the garbled noise was transformed into crystal-clear audio.
-Generated python
+### Technical Stack
 
-      
-# The key to clean audio: converting from float to int16
-raw_float_samples = np.concatenate(self.buffer)
-int_samples = (raw_float_samples * np.iinfo(np.int16).max).astype(np.int16)
+Built on modern Python libraries including sounddevice for audio capture, pydbus for D-Bus communication, mutagen for metadata handling, and rich for user interface components. The application follows modern software engineering practices with comprehensive testing, type hints, and modular architecture.
 
-# Now, pydub gets the data it expects
-audio_segment = AudioSegment(
-    int_samples.tobytes(),
-    sample_width=2, # 16-bit = 2 bytes
-    ...
-)
-
-    
-
-IGNORE_WHEN_COPYING_START
-Use code with caution. Python
-IGNORE_WHEN_COPYING_END
-Making It Robust: From Script to Tool
-
-With the core functionality working, the focus shifted to making the tool truly reliable for long-term, headless use. This involved adding several key features:
-
-    Handling Incomplete Tracks: A track is only saved if the script has seen it from beginning to end. This prevents saving partial rips if the script is started mid-song or is stopped before a track finishes.
-
-    Skipping Ads and Existing Files: The script inspects the track ID to differentiate songs from ads and checks if a file already exists to avoid re-recording entire playlists.
-
-    Automatic Device Detection: The code was made more resilient to handle the different ways that PipeWire and PulseAudio name their audio devices, and to dynamically detect the correct sample rate.
-
-    A Polished UI: Using rich, the application now provides a live-updating spinner that gives the user constant feedback on what's happening, from recording to pausing to skipping ads.
-
-The Headless Dream: Docker and spotifyd
-
-The final goal was to run this as a completely automated service. The solution was to combine spotify-splitter with spotifyd (a headless Spotify client) and package everything in Docker.
-
-A docker-compose.yml file now orchestrates the entire setup:
-
-    The spotifyd Service: Runs the headless Spotify client, which plays audio to the system.
-
-    The spotify-splitter Service: Runs our application, which finds the audio from spotifyd and records it.
-
-This setup is perfect for a home server or a Raspberry Pi. You can queue up a massive playlist from your phone, tell it to play on the headless client, and walk away. Hours later, you'll have a folder full of perfectly recorded and split tracks.
-Conclusion
-
-spotify-splitter is a testament to the power of the open-source ecosystem. It stands on the shoulders of giants, from the Linux audio stack to the developers of mutagen, pydub, and rich. It began as a simple idea and evolved through a challenging but rewarding debugging process into a stable, feature-rich tool that solves a real-world problem.
-
-I hope you find it as useful as I do. Happy listening, and happy hacking
+This tool represents a practical solution to digital music archival challenges, combining robust audio processing with reliable metadata handling to create a professional-grade recording system for personal use.

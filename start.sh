@@ -12,4 +12,4 @@ if [ "${INSTALL_BEETS:-true}" = "true" ]; then
     cron
 fi
 
-exec poetry run spotify-splitter --output /Music record
+exec poetry run spotify-splitter --output /Music --spotifyd-mode record

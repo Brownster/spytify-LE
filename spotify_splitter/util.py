@@ -47,8 +47,16 @@ def _is_spotify(properties: dict) -> bool:
     )
     for key in spotify_keys:
         value = properties.get(key)
-        if isinstance(value, str) and "spotify" in value.lower():
-            return True
+        if isinstance(value, str):
+            # Check for Spotify client
+            if "spotify" in value.lower():
+                return True
+            # Check for spotifyd/librespot
+            if "librespot" in value.lower():
+                return True
+            # Check for spotifyd binary name
+            if "spotifyd" in value.lower():
+                return True
     return False
 
 
