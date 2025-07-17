@@ -550,6 +550,7 @@ class SegmentManager:
         tags["artist"] = track_info.artist
         tags["title"] = track_info.title
         tags["album"] = track_info.album
+        tags["albumartist"] = track_info.artist
         if track_info.track_number:
             tags["tracknumber"] = str(track_info.track_number)
         tags.save(path)
@@ -964,6 +965,7 @@ class SegmentManager:
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
             tags["album"] = track_info.album
+            tags["albumartist"] = track_info.artist
             tags.save(path)
             
             # Skip album art in degraded mode
