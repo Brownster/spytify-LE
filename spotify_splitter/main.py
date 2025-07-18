@@ -126,8 +126,13 @@ def record(
     ),
     min_buffer_size: int = typer.Option(
         50,
-        "--min-buffer-size", 
+        "--min-buffer-size",
         help="Minimum buffer size for adaptive management",
+    ),
+    playlist: str = typer.Option(
+        None,
+        "--playlist",
+        help="Write an M3U playlist with all recorded tracks",
     ),
 ):
     """Start recording until interrupted."""
@@ -142,6 +147,7 @@ def record(
 
     out_dir = ctx.obj["output"]
     fmt = ctx.obj["format"]
+    playlist_path = Path(playlist) if playlist else None
 
     # Detect system capabilities and select configuration profile
     try:
@@ -413,6 +419,7 @@ def record(
         fmt=fmt,
         audio_queue=audio_queue,
         event_queue=event_queue,
+        playlist_path=playlist_path,
         ui_callback=enhanced_ui_callback,
         error_recovery=error_recovery,
         enable_error_recovery=True,
@@ -622,6 +629,12 @@ def record(
             except Exception as e:
                 logging.error(f"Error stopping metrics collection: {e}")
         
+        if 'manager' in locals():
+            try:
+                manager.close_playlist()
+            except Exception as e:
+                logging.debug(f"Error closing playlist: {e}")
+
         logging.info("Done.")
 
 

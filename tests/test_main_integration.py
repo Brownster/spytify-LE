@@ -344,6 +344,44 @@ class TestMainIntegration:
             assert call_args.kwargs['queue_size'] == 500
             assert call_args.kwargs['latency'] == 0.05
             assert call_args.kwargs['blocksize'] == 1024
+
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_playlist_option(
+        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info
+    ):
+        """Ensure playlist path is passed to SegmentManager."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.run = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+
+        def mock_track_events_func(*args, **kwargs):
+            time.sleep(0.1)
+            raise KeyboardInterrupt()
+
+        mock_track_events.side_effect = mock_track_events_func
+
+        playlist_path = Path(self.temp_dir) / "session.m3u"
+        result = self.runner.invoke(app, [
+            '--output', self.temp_dir,
+            'record',
+            '--playlist', str(playlist_path)
+        ])
+
+        assert result.exit_code == 0
+        kwargs = mock_segment_manager.call_args.kwargs
+        assert kwargs['playlist_path'] == playlist_path
     
     def test_profiles_command(self):
         """Test the profiles command functionality."""

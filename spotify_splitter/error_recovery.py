@@ -13,7 +13,10 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, Any, Callable, List
 import threading
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:  # pragma: no cover - optional dependency may be missing
+    sd = None
 
 logger = logging.getLogger(__name__)
 
