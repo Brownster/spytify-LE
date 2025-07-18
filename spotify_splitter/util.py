@@ -3,7 +3,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:  # pragma: no cover - optional dependency may be missing
+    sd = None
 
 logger = logging.getLogger(__name__)
 

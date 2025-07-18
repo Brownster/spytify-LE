@@ -13,6 +13,7 @@ def load_segmenter(monkeypatch):
     dummy_dbus = types.ModuleType("pydbus")
     dummy_dbus.SessionBus = lambda: None
     monkeypatch.setitem(sys.modules, "pydbus", dummy_dbus)
+    monkeypatch.setitem(sys.modules, "sounddevice", types.ModuleType("sounddevice"))
     module = importlib.import_module("spotify_splitter.segmenter")
     importlib.reload(module)
     return module
@@ -105,3 +106,22 @@ def test_skip_existing_file(monkeypatch, tmp_path):
     manager._export(np.ones((2, 2), dtype="float32"), track)
 
     assert not called
+
+
+def test_playlist_creation(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    playlist = tmp_path / "session.m3u"
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav", playlist_path=playlist)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0)
+
+    monkeypatch.setattr(AudioSegment, "export", lambda self, path, format=None, bitrate=None: Path(path).touch())
+
+    manager._export(np.ones((2, 2), dtype="float32"), track)
+    manager.close_playlist()
+
+    playlist_content = playlist.read_text().strip().splitlines()
+    expected = str(manager._get_track_path(track))
+    assert expected in playlist_content[-1]

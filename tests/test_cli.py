@@ -41,3 +41,4 @@ def test_cli_help(monkeypatch):
     assert "--queue-size" in output
     assert "--blocksize" in output
     assert "--latency" in output
+    assert "--playlist" in output

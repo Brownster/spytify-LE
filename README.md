@@ -83,6 +83,7 @@ For headless operation, you can use [spotifyd](https://github.com/Spotifyd/spoti
 - Automatically skips advertisements using track metadata
 - Avoids re-recording tracks that already exist on disk
 - Works with both Spotify and spotifyd via the configurable `--player` option
+- Optionally creates an M3U playlist of recorded tracks using `--playlist <file>`
 
 ## Usage
 
@@ -96,6 +97,9 @@ spotify-splitter --output ~/Music/Rips --format flac record
 
 # Headless mode with spotifyd
 spotify-splitter record --spotifyd-mode
+
+# Save a playlist of recorded tracks
+spotify-splitter record --playlist mysession.m3u
 ```
 
 ### With Source Installation
@@ -108,6 +112,9 @@ poetry run spotify-splitter --output ~/Music/Rips --format flac record
 
 # Headless mode with spotifyd
 poetry run spotify-splitter record --spotifyd-mode
+
+# Save a playlist of recorded tracks
+poetry run spotify-splitter record --playlist mysession.m3u
 ```
 
 By default, tracks are saved under `~/Music/<Artist>/<Album>/<Artist> - <Title>.mp3`.

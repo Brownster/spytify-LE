@@ -1,4 +1,7 @@
-import sounddevice as sd
+try:
+    import sounddevice as sd
+except Exception:  # pragma: no cover - optional dependency may be missing
+    sd = None
 import numpy as np
 from queue import Queue, Full
 from typing import Optional, Callable

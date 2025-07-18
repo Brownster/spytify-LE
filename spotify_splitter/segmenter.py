@@ -58,6 +58,7 @@ class SegmentManager:
         fmt: str = "mp3",
         audio_queue: Optional[queue.Queue] = None,
         event_queue: Optional[queue.Queue] = None,
+        playlist_path: Optional[Path] = None,
         ui_callback: Optional[callable] = None,
         grace_period_ms: int = 500,
         max_correction_ms: int = 2000,
@@ -72,6 +73,12 @@ class SegmentManager:
         self.audio_queue = audio_queue
         self.event_queue = event_queue
         self.ui_callback = ui_callback
+        self.playlist_path = Path(playlist_path) if playlist_path else None
+        self.playlist_file = None
+        if self.playlist_path:
+            self.playlist_path.parent.mkdir(parents=True, exist_ok=True)
+            self.playlist_file = self.playlist_path.open("w", encoding="utf-8")
+            self.playlist_file.write("#EXTM3U\n")
 
         self.continuous_buffer = AudioSegment.empty()
         self.track_markers: List[TrackMarker] = []
@@ -129,6 +136,15 @@ class SegmentManager:
                 except queue.Empty:
                     break
         logger.debug("Cache flush complete")
+
+    def close_playlist(self) -> None:
+        """Close the playlist file if open."""
+        if self.playlist_file:
+            try:
+                self.playlist_file.close()
+            except Exception:
+                pass
+            self.playlist_file = None
         
     def shutdown_cleanup(self) -> None:
         """Clean shutdown - process any remaining tracks."""
@@ -569,6 +585,12 @@ class SegmentManager:
                 logger.warning("Failed to download or embed cover art: %s", e)
 
         audio.save()
+        if self.playlist_file:
+            try:
+                self.playlist_file.write(f"{path}\n")
+                self.playlist_file.flush()
+            except Exception:
+                pass
         logger.info("Saved %s", path)
         # Notify UI of successful save
         if hasattr(self, 'ui_callback') and self.ui_callback:

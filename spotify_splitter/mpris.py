@@ -1,5 +1,11 @@
-from gi.repository import GLib
-from pydbus import SessionBus
+try:
+    from gi.repository import GLib
+except Exception:  # pragma: no cover - allow running without gi
+    GLib = None
+try:
+    from pydbus import SessionBus
+except Exception:  # pragma: no cover - allow running without pydbus
+    SessionBus = None
 from collections import namedtuple
 from typing import Callable, Optional
 import logging
