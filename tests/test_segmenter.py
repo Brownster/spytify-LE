@@ -125,3 +125,27 @@ def test_playlist_creation(monkeypatch, tmp_path):
     playlist_content = playlist.read_text().strip().splitlines()
     expected = str(manager._get_track_path(track))
     assert expected in playlist_content[-1]
+
+
+def test_playlist_append(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    playlist = tmp_path / "session.m3u"
+    playlist.parent.mkdir(parents=True, exist_ok=True)
+    playlist.write_text("#EXTM3U\nexisting.mp3\n")
+
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav", playlist_path=playlist)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0)
+
+    monkeypatch.setattr(AudioSegment, "export", lambda self, path, format=None, bitrate=None: Path(path).touch())
+
+    manager._export(np.ones((2, 2), dtype="float32"), track)
+    manager.close_playlist()
+
+    playlist_content = playlist.read_text().strip().splitlines()
+    expected = str(manager._get_track_path(track))
+    assert playlist_content[0] == "#EXTM3U"
+    assert "existing.mp3" in playlist_content
+    assert expected in playlist_content[-1]

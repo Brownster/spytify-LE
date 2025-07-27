@@ -100,6 +100,7 @@ spotify-splitter record --spotifyd-mode
 
 # Save a playlist of recorded tracks
 spotify-splitter record --playlist mysession.m3u
+# Existing playlist files will be appended to rather than overwritten
 ```
 
 ### With Source Installation
@@ -115,6 +116,7 @@ poetry run spotify-splitter record --spotifyd-mode
 
 # Save a playlist of recorded tracks
 poetry run spotify-splitter record --playlist mysession.m3u
+# Existing playlist files will be appended to rather than overwritten
 ```
 
 By default, tracks are saved under `~/Music/<Artist>/<Album>/<Artist> - <Title>.mp3`.
