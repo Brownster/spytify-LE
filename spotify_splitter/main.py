@@ -43,6 +43,9 @@ def main_callback(
     
     Supports both regular Spotify client and headless spotifyd usage.
     Use --spotifyd-mode for optimized headless operation.
+
+    For a full list of recording options, run:
+    spotify-splitter record --help
     """
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
@@ -210,8 +213,8 @@ def record(
             )
             logging.info("Adaptive buffer manager initialized")
         
-        if effective_monitoring:
-            health_monitor = BufferHealthMonitor()
+        if effective_monitoring and buffer_manager:
+            health_monitor = BufferHealthMonitor(buffer_manager=buffer_manager)
             logging.info("Buffer health monitor initialized")
         
         error_recovery = ErrorRecoveryManager(

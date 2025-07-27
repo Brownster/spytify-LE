@@ -52,6 +52,7 @@ def track_events(
         raise e
 
     def handler(_iface, changed, _invalid):
+        logger.debug(f"MPRIS properties changed: {changed}")
         md = changed.get("Metadata", {})
         if md:
             if dump_metadata:
