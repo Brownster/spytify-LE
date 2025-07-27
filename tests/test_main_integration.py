@@ -382,6 +382,80 @@ class TestMainIntegration:
         assert result.exit_code == 0
         kwargs = mock_segment_manager.call_args.kwargs
         assert kwargs['playlist_path'] == playlist_path
+
+    @patch('spotify_splitter.main.tag_output')
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_tagger_called_on_shutdown(
+        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info, mock_tag_output
+    ):
+        """Ensure tagging API is invoked when recording stops."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.run = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+
+        def mock_track_events_func(*args, **kwargs):
+            time.sleep(0.1)
+            raise KeyboardInterrupt()
+
+        mock_track_events.side_effect = mock_track_events_func
+
+        result = self.runner.invoke(app, [
+            '--output', self.temp_dir,
+            'record'
+        ])
+
+        assert result.exit_code == 0
+        mock_tag_output.assert_called_once_with(Path(self.temp_dir), None)
+
+    @patch('spotify_splitter.main.tag_output')
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_tagger_called_with_playlist(
+        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info, mock_tag_output
+    ):
+        """Ensure tagging API receives playlist when playlist option is used."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.run = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+
+        def mock_track_events_func(*args, **kwargs):
+            time.sleep(0.1)
+            raise KeyboardInterrupt()
+
+        mock_track_events.side_effect = mock_track_events_func
+
+        playlist_path = Path(self.temp_dir) / 'playlist.m3u'
+        result = self.runner.invoke(app, [
+            '--output', self.temp_dir,
+            'record',
+            '--playlist', str(playlist_path)
+        ])
+
+        assert result.exit_code == 0
+        mock_tag_output.assert_called_once_with(Path(self.temp_dir), playlist_path)
     
     def test_profiles_command(self):
         """Test the profiles command functionality."""
