@@ -77,8 +77,10 @@ class SegmentManager:
         self.playlist_file = None
         if self.playlist_path:
             self.playlist_path.parent.mkdir(parents=True, exist_ok=True)
-            self.playlist_file = self.playlist_path.open("w", encoding="utf-8")
-            self.playlist_file.write("#EXTM3U\n")
+            mode = "a" if self.playlist_path.exists() else "w"
+            self.playlist_file = self.playlist_path.open(mode, encoding="utf-8")
+            if mode == "w":
+                self.playlist_file.write("#EXTM3U\n")
 
         self.continuous_buffer = AudioSegment.empty()
         self.track_markers: List[TrackMarker] = []
