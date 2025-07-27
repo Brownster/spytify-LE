@@ -22,6 +22,7 @@ from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetect
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
 from .util import get_spotify_stream_info
+from .tagging_api import tag_output
 try:
     from pydbus.errors import DBusError
 except Exception:  # pragma: no cover - fallback if gi is missing
@@ -634,6 +635,12 @@ def record(
                 manager.close_playlist()
             except Exception as e:
                 logging.debug(f"Error closing playlist: {e}")
+
+        # Invoke tagging API on shutdown
+        try:
+            tag_output(Path(out_dir) if out_dir else OUTPUT_DIR, playlist_path)
+        except Exception as e:
+            logging.debug(f"Error calling tagger API: {e}")
 
         logging.info("Done.")
 
