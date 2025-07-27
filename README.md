@@ -132,6 +132,33 @@ spotify-splitter record --queue-size 50 --latency 0.1
 poetry run spotify-splitter record --queue-size 50 --latency 0.1
 ```
 
+## ID3 Tagging API Integration
+
+Spotify Splitter includes integration with an external ID3 tagging API service that automatically processes recorded tracks to enhance metadata tags with additional information like genre, year, and other missing tags.
+
+### Automatic Processing on Shutdown
+
+When recording ends, Spotify Splitter automatically calls the tagging API service to process your recorded tracks. The API runs at `http://localhost:5000` by default and provides two endpoints:
+
+- `/process_directory` - Processes all MP3 files in a directory
+- `/process_playlist` - Processes tracks listed in an M3U playlist file
+
+### Setting Up the ID3 Tagger API
+
+To use this feature, install and run the companion ID3 tagging service:
+
+1. **Install the ID3 Tagger API**: [https://github.com/Brownster/id3-tagger](https://github.com/Brownster/id3-tagger)
+2. **Start the service** on `http://localhost:5000`
+3. **Record tracks** with Spotify Splitter - the API will be called automatically on shutdown
+
+The tagging service enhances your tracks with:
+- Genre information
+- Release year
+- Additional metadata from music databases
+- Improved tag consistency
+
+If the API service is not running, Spotify Splitter will continue to work normally and simply log a warning about the unavailable tagging service.
+
 ## Post-Processing with Beets (Optional we do add enough tag info to be imported ok into IPOD / MP3 player, Year and Genre will not be adeded by spoti2)
 
 This tool is designed to produce raw track rips. For the best results,
