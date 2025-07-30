@@ -66,11 +66,49 @@ For headless operation, you can use [spotifyd](https://github.com/Spotifyd/spoti
    backend = "pulseaudio"
    volume_normalisation = true
    bitrate = 320
+   use_mpris = true
    ```
 3. **Start spotifyd**: `systemctl --user start spotifyd`
 4. **Run spotify-splitter**: 
    - With wheel: `spotify-splitter --output ~/Music record --spotifyd-mode`
    - With source: `poetry run spotify-splitter --output ~/Music record --spotifyd-mode`
+
+### Enabling MPRIS on spotifyd
+
+Spotify Splitter receives track metadata via the [MPRIS](https://specifications.freedesktop.org/mpris-spec/latest/) D-Bus interface. When running `spotifyd` on headless systems, no session bus may be available. You can either launch `spotifyd` with its own bus using `dbus-launch` or configure it to use the system bus.
+
+**Option 1 – dbus-launch**
+
+Create a wrapper script and start it with `dbus-launch`:
+
+```bash
+#!/bin/bash
+echo "$DBUS_SESSION_BUS_ADDRESS" > /tmp/spotifyd_bus
+echo "To use spotifyd's session bus, run 'export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/spotifyd_bus)'"
+spotifyd --no-daemon --use-mpris
+```
+
+Run `dbus-launch ./spotify_wrapper.sh` and follow the instructions in the output.
+
+**Option 2 – system bus**
+
+Set `dbus_type = "system"` (or pass `--dbus-type system`) and allow your user to own the MPRIS name by creating `/usr/share/dbus-1/system.d/spotifyd.conf`:
+
+```xml
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <policy user="youruser">
+    <allow own_prefix="rs.spotifyd"/>
+    <allow own_prefix="org.mpris.MediaPlayer2.spotifyd"/>
+  </policy>
+  <policy user="youruser">
+    <allow send_destination_prefix="rs.spotifyd"/>
+    <allow send_destination_prefix="org.mpris.MediaPlayer2.spotifyd"/>
+  </policy>
+</busconfig>
+```
+
+Reload D-Bus with `systemctl reload dbus` after creating the file. Ensure you are using a `spotifyd` build that includes the `dbus_mpris` feature (the `-full` binary or a custom build with `--features "dbus_mpris"`).
 
 ## Features
 
