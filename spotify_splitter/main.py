@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 import typer
 import queue
+import time
 
 from rich.live import Live
 from rich.spinner import Spinner
@@ -520,27 +521,29 @@ def record(
                 )
                 logging.info("Using basic audio stream")
             
+            # Define callbacks before audio stream context
+            def on_change(track):
+                logging.info(f"TRACK CHANGE CALLBACK: {track.artist} - {track.title}")
+                ui_state["current_track"] = track
+                if ui_state["tracks_recorded"] == 0:
+                    ui_state["recording_status"] = "First track - will be discarded"
+                else:
+                    ui_state["recording_status"] = f"Recording: {track.artist} - {track.title}"
+                live.update(create_enhanced_ui())
+                event_queue.put(("track_change", track))
+
+            def on_status(status: str):
+                if status == "Playing":
+                    ui_state["recording_status"] = "Recording audio..."
+                elif status == "Paused":
+                    ui_state["recording_status"] = "Playback paused"
+                live.update(create_enhanced_ui())
+
+            # Adjust player name for spotifyd mode
+            effective_player = "spotifyd" if spotifyd_mode else player
+            
             with audio_stream:
                 processing_thread.start()
-
-                def on_change(track):
-                    ui_state["current_track"] = track
-                    if ui_state["tracks_recorded"] == 0:
-                        ui_state["recording_status"] = "First track - will be discarded"
-                    else:
-                        ui_state["recording_status"] = f"Recording: {track.artist} - {track.title}"
-                    live.update(create_enhanced_ui())
-                    event_queue.put(("track_change", track))
-
-                def on_status(status: str):
-                    if status == "Playing":
-                        ui_state["recording_status"] = "Recording audio..."
-                    elif status == "Paused":
-                        ui_state["recording_status"] = "Playback paused"
-                    live.update(create_enhanced_ui())
-
-                # Adjust player name for spotifyd mode
-                effective_player = "spotifyd" if spotifyd_mode else player
                 
                 # Start buffer health monitoring in a separate thread if enabled
                 def monitor_buffer_health():
@@ -565,12 +568,29 @@ def record(
                     health_thread = threading.Thread(target=monitor_buffer_health, daemon=True)
                     health_thread.start()
                 
-                track_events(
-                    on_change,
-                    on_status,
-                    dump_metadata=dump_metadata,
-                    player_name=effective_player,
-                )
+                # Start MPRIS tracking in a separate thread to avoid blocking
+                def mpris_wrapper():
+                    try:
+                        logging.info(f"Starting MPRIS tracking for player: {effective_player}")
+                        track_events(
+                            on_change,
+                            on_status,
+                            dump_metadata=dump_metadata,
+                            player_name=effective_player,
+                        )
+                    except Exception as e:
+                        logging.error(f"MPRIS tracking failed: {e}")
+                        
+                mpris_thread = threading.Thread(target=mpris_wrapper, daemon=True)
+                mpris_thread.start()
+                logging.info("MPRIS thread started")
+                
+                # Keep the main thread alive while MPRIS and audio recording run
+                try:
+                    while processing_thread.is_alive():
+                        time.sleep(0.1)
+                except KeyboardInterrupt:
+                    raise
                 
     except KeyboardInterrupt:
         logging.info("Shutdown signal received, processing remaining tracks...")
@@ -641,7 +661,9 @@ def record(
 
         # Invoke tagging API on shutdown
         try:
-            tag_output(Path(out_dir) if out_dir else OUTPUT_DIR, playlist_path)
+            # Make playlist path absolute if it exists
+            absolute_playlist_path = playlist_path.resolve() if playlist_path else None
+            tag_output(Path(out_dir) if out_dir else OUTPUT_DIR, absolute_playlist_path)
         except Exception as e:
             logging.debug(f"Error calling tagger API: {e}")
 

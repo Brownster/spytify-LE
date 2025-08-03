@@ -554,46 +554,54 @@ class SegmentManager:
 
         path = self._get_track_path(track_info)
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            logger.info("File %s already exists, skipping export", path)
-            return
+        
+        file_already_exists = path.exists()
+        if file_already_exists:
+            logger.info("File %s already exists, skipping export but adding to playlist", path)
+        else:
+            audio_segment.export(path, format=self.format, bitrate="320k")
 
-        audio_segment.export(path, format=self.format, bitrate="320k")
-
-        try:
-            tags = EasyID3(path)
-        except Exception:
-            tags = EasyID3()
-
-        tags["artist"] = track_info.artist
-        tags["title"] = track_info.title
-        tags["album"] = track_info.album
-        tags["albumartist"] = track_info.artist
-        if track_info.track_number:
-            tags["tracknumber"] = str(track_info.track_number)
-        tags.save(path)
-
-        try:
-            audio = ID3(path)
-        except Exception as e:
-            logger.warning("Could not load file for tagging: %s", e)
-            return
-
-        if track_info.art_uri:
             try:
-                img = requests.get(track_info.art_uri).content
-                audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
-            except Exception as e:
-                logger.warning("Failed to download or embed cover art: %s", e)
+                tags = EasyID3(path)
+            except Exception:
+                tags = EasyID3()
 
-        audio.save()
+            tags["artist"] = track_info.artist
+            tags["title"] = track_info.title
+            tags["album"] = track_info.album
+            tags["albumartist"] = track_info.artist
+            if track_info.track_number:
+                tags["tracknumber"] = str(track_info.track_number)
+            tags.save(path)
+
+            try:
+                audio = ID3(path)
+            except Exception as e:
+                logger.warning("Could not load file for tagging: %s", e)
+                audio = None
+
+            if audio and track_info.art_uri:
+                try:
+                    img = requests.get(track_info.art_uri).content
+                    audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
+                except Exception as e:
+                    logger.warning("Failed to download or embed cover art: %s", e)
+
+            if audio:
+                audio.save()
+        
+        # Always add to playlist, whether file existed or not
         if self.playlist_file:
             try:
                 self.playlist_file.write(f"{path}\n")
                 self.playlist_file.flush()
             except Exception:
                 pass
-        logger.info("Saved %s", path)
+        
+        if file_already_exists:
+            logger.info("Added existing file to playlist: %s", path)
+        else:
+            logger.info("Saved %s", path)
         # Notify UI of successful save
         if hasattr(self, 'ui_callback') and self.ui_callback:
             self.ui_callback("saved", track_info)
