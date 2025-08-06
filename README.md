@@ -122,6 +122,7 @@ Reload D-Bus with `systemctl reload dbus` after creating the file. Ensure you ar
 - Avoids re-recording tracks that already exist on disk
 - Works with both Spotify and spotifyd via the configurable `--player` option
 - Optionally creates an M3U playlist of recorded tracks using `--playlist <file>`
+- Bundle playlist tracks into a single album using `--bundle-playlist`
 
 ## Usage
 
@@ -139,6 +140,8 @@ spotify-splitter record --spotifyd-mode
 # Save a playlist of recorded tracks
 spotify-splitter record --playlist mysession.m3u
 # Existing playlist files will be appended to rather than overwritten
+# Bundle playlist tracks under a single album
+spotify-splitter record --playlist mysession.m3u --bundle-playlist
 ```
 
 ### With Source Installation
@@ -155,6 +158,8 @@ poetry run spotify-splitter record --spotifyd-mode
 # Save a playlist of recorded tracks
 poetry run spotify-splitter record --playlist mysession.m3u
 # Existing playlist files will be appended to rather than overwritten
+# Bundle playlist tracks under a single album
+poetry run spotify-splitter record --playlist mysession.m3u --bundle-playlist
 ```
 
 By default, tracks are saved under `~/Music/<Artist>/<Album>/<Artist> - <Title>.mp3`.

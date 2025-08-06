@@ -8,6 +8,7 @@ from pydub import AudioSegment
 
 
 def load_segmenter(monkeypatch):
+    monkeypatch.syspath_prepend(str(Path(__file__).resolve().parents[1]))
     monkeypatch.setitem(sys.modules, "gi", types.ModuleType("gi"))
     monkeypatch.setitem(sys.modules, "gi.repository", types.SimpleNamespace(GLib=types.SimpleNamespace()))
     dummy_dbus = types.ModuleType("pydbus")
@@ -149,3 +150,49 @@ def test_playlist_append(monkeypatch, tmp_path):
     assert playlist_content[0] == "#EXTM3U"
     assert "existing.mp3" in playlist_content
     assert expected in playlist_content[-1]
+
+
+def test_bundle_playlist_tags(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    playlist = tmp_path / "rain.m3u"
+    manager = SegmentManager(
+        samplerate=44100,
+        output_dir=tmp_path,
+        fmt="wav",
+        playlist_path=playlist,
+        bundle_playlist=True,
+    )
+    track = TrackInfo("Artist", "Title", "Orig", None, "spotify:track:1", 1, 0, 0)
+
+    captured = {}
+
+    class FakeEasyID3(dict):
+        def __init__(self, path=None):
+            pass
+
+        def save(self, path):
+            captured.update(self)
+
+    monkeypatch.setattr(segmenter, "EasyID3", FakeEasyID3)
+    monkeypatch.setattr(
+        segmenter,
+        "ID3",
+        lambda path: types.SimpleNamespace(add=lambda *a, **k: None, save=lambda: None),
+    )
+    monkeypatch.setattr(
+        AudioSegment,
+        "export",
+        lambda self, path, format=None, bitrate=None: Path(path).touch(),
+    )
+
+    manager._export(np.ones((2, 2), dtype="float32"), track)
+
+    expected_path = tmp_path / "Various Artists" / "rain" / "01 - Title.wav"
+    assert expected_path.exists()
+    assert captured["album"] == "rain"
+    assert captured["albumartist"] == "Various Artists"
+    assert captured["artist"] == "Artist"
+    assert captured["title"] == "Title"

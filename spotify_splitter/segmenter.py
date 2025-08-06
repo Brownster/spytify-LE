@@ -59,6 +59,7 @@ class SegmentManager:
         audio_queue: Optional[queue.Queue] = None,
         event_queue: Optional[queue.Queue] = None,
         playlist_path: Optional[Path] = None,
+        bundle_playlist: bool = False,
         ui_callback: Optional[callable] = None,
         grace_period_ms: int = 500,
         max_correction_ms: int = 2000,
@@ -74,6 +75,12 @@ class SegmentManager:
         self.event_queue = event_queue
         self.ui_callback = ui_callback
         self.playlist_path = Path(playlist_path) if playlist_path else None
+        self.bundle_playlist = bundle_playlist
+        if self.bundle_playlist and not self.playlist_path:
+            raise ValueError("bundle_playlist requires playlist_path")
+        self.bundle_album_name = (
+            self.playlist_path.stem if self.bundle_playlist else None
+        )
         self.playlist_file = None
         if self.playlist_path:
             self.playlist_path.parent.mkdir(parents=True, exist_ok=True)
@@ -522,8 +529,12 @@ class SegmentManager:
     # ------------------------------------------------------------------
 
     def _get_track_path(self, t: TrackInfo) -> Path:
-        safe_artist = sanitize(t.artist)
-        safe_album = sanitize(t.album)
+        if self.bundle_album_name:
+            safe_artist = sanitize("Various Artists")
+            safe_album = sanitize(self.bundle_album_name)
+        else:
+            safe_artist = sanitize(t.artist)
+            safe_album = sanitize(t.album)
         safe_title = sanitize(t.title)
 
         folder = self.output_dir / safe_artist / safe_album
@@ -568,8 +579,12 @@ class SegmentManager:
 
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
-            tags["album"] = track_info.album
-            tags["albumartist"] = track_info.artist
+            if self.bundle_album_name:
+                tags["album"] = self.bundle_album_name
+                tags["albumartist"] = "Various Artists"
+            else:
+                tags["album"] = track_info.album
+                tags["albumartist"] = track_info.artist
             if track_info.track_number:
                 tags["tracknumber"] = str(track_info.track_number)
             tags.save(path)
@@ -996,8 +1011,12 @@ class SegmentManager:
             # Only add essential tags
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
-            tags["album"] = track_info.album
-            tags["albumartist"] = track_info.artist
+            if self.bundle_album_name:
+                tags["album"] = self.bundle_album_name
+                tags["albumartist"] = "Various Artists"
+            else:
+                tags["album"] = track_info.album
+                tags["albumartist"] = track_info.artist
             tags.save(path)
             
             # Skip album art in degraded mode
