@@ -139,6 +139,11 @@ def record(
         "--playlist",
         help="Write an M3U playlist with all recorded tracks",
     ),
+    bundle_playlist: bool = typer.Option(
+        False,
+        "--bundle-playlist",
+        help="Use playlist name as album and tag album artist as 'Various Artists'",
+    ),
 ):
     """Start recording until interrupted."""
     try:
@@ -153,6 +158,9 @@ def record(
     out_dir = ctx.obj["output"]
     fmt = ctx.obj["format"]
     playlist_path = Path(playlist) if playlist else None
+    if bundle_playlist and not playlist_path:
+        logging.error("--bundle-playlist requires --playlist to be set")
+        raise typer.Exit(code=1)
 
     # Detect system capabilities and select configuration profile
     try:
@@ -425,6 +433,7 @@ def record(
         audio_queue=audio_queue,
         event_queue=event_queue,
         playlist_path=playlist_path,
+        bundle_playlist=bundle_playlist,
         ui_callback=enhanced_ui_callback,
         error_recovery=error_recovery,
         enable_error_recovery=True,
