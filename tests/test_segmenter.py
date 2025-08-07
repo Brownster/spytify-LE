@@ -196,3 +196,53 @@ def test_bundle_playlist_tags(monkeypatch, tmp_path):
     assert captured["albumartist"] == "Various Artists"
     assert captured["artist"] == "Artist"
     assert captured["title"] == "Title"
+
+
+def test_bundle_playlist_track_numbers(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    playlist = tmp_path / "rain.m3u"
+    manager = SegmentManager(
+        samplerate=44100,
+        output_dir=tmp_path,
+        fmt="wav",
+        playlist_path=playlist,
+        bundle_playlist=True,
+    )
+
+    captures = []
+
+    class FakeEasyID3(dict):
+        def __init__(self, path=None):
+            pass
+
+        def save(self, path):
+            captures.append(dict(self))
+
+    monkeypatch.setattr(segmenter, "EasyID3", FakeEasyID3)
+    monkeypatch.setattr(
+        segmenter,
+        "ID3",
+        lambda path: types.SimpleNamespace(add=lambda *a, **k: None, save=lambda: None),
+    )
+    monkeypatch.setattr(
+        AudioSegment,
+        "export",
+        lambda self, path, format=None, bitrate=None: Path(path).touch(),
+    )
+
+    track1 = TrackInfo("Artist1", "T1", "Orig1", None, "spotify:track:1", 10, 0, 0)
+    track2 = TrackInfo("Artist2", "T2", "Orig2", None, "spotify:track:2", 20, 0, 0)
+
+    manager._export(np.ones((2, 2), dtype="float32"), track1)
+    manager._export(np.ones((2, 2), dtype="float32"), track2)
+
+    expected1 = tmp_path / "Various Artists" / "rain" / "01 - T1.wav"
+    expected2 = tmp_path / "Various Artists" / "rain" / "02 - T2.wav"
+
+    assert expected1.exists()
+    assert expected2.exists()
+    assert captures[0]["tracknumber"] == "1"
+    assert captures[1]["tracknumber"] == "2"

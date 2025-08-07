@@ -81,6 +81,7 @@ class SegmentManager:
         self.bundle_album_name = (
             self.playlist_path.stem if self.bundle_playlist else None
         )
+        self.bundle_track_number = 1
         self.playlist_file = None
         if self.playlist_path:
             self.playlist_path.parent.mkdir(parents=True, exist_ok=True)
@@ -548,6 +549,9 @@ class SegmentManager:
 
     def _export(self, segment: Iterable | AudioSegment, track_info: TrackInfo) -> None:
         """Export ``segment`` to disk and tag it with metadata."""
+        if self.bundle_playlist:
+            track_info = track_info._replace(track_number=self.bundle_track_number)
+
         if isinstance(segment, np.ndarray):
             if segment.dtype.kind == "f":
                 segment = np.clip(segment, -1.0, 1.0)
@@ -612,7 +616,7 @@ class SegmentManager:
                 self.playlist_file.flush()
             except Exception:
                 pass
-        
+
         if file_already_exists:
             logger.info("Added existing file to playlist: %s", path)
         else:
@@ -620,6 +624,9 @@ class SegmentManager:
         # Notify UI of successful save
         if hasattr(self, 'ui_callback') and self.ui_callback:
             self.ui_callback("saved", track_info)
+
+        if self.bundle_playlist:
+            self.bundle_track_number += 1
 
     def _export_with_error_handling(self, segment: AudioSegment, track_info: TrackInfo) -> bool:
         """
