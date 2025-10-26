@@ -127,6 +127,22 @@ Reload D-Bus with `systemctl reload dbus` after creating the file. Ensure you ar
 
 ## Usage
 
+### Quick Setup (Recommended)
+```bash
+# Create or update saved defaults (prompts for the essentials)
+spotify-splitter configure
+
+# Or, when running from source
+poetry run spotify-splitter configure
+```
+
+The wizard stores your preferences (output folder, format, player, etc.) in
+`~/.config/spotify_splitter/config.json`. After that, a plain
+`spotify-splitter record` automatically uses those defaults—no extra flags
+needed. Re-run the configure command any time you want to make changes, or pass
+`--non-interactive` with options to script the setup. Use `--config` to point at
+an alternate configuration file if you maintain multiple profiles.
+
 ### With Wheel Installation
 ```bash
 # Basic usage
@@ -176,6 +192,49 @@ spotify-splitter record --queue-size 50 --latency 0.1
 
 # With source installation
 poetry run spotify-splitter record --queue-size 50 --latency 0.1
+```
+
+## Service Mode & Web UI
+
+Want Spotify Splitter to run hands-off as a background service? A companion
+wrapper is bundled in this repository:
+
+```bash
+# Launch the service with the retro-styled web dashboard (default port 8730)
+python -m spoti2_service
+
+# Customise host/port or config path as needed
+python -m spoti2_service --host 127.0.0.1 --port 9090 --config ~/.config/spotify_splitter/service.json
+```
+
+Highlights:
+- Persistent supervisor that relaunches the recorder if Spotify is idle (no more crashes when playback isn’t active yet).
+- Metrics/monitoring disabled by default for lower resource usage; toggle them on only when needed.
+- Lightweight “WinMX vibe” control deck (`http://HOST:PORT`) to adjust the saved config, update playlist targets, and trigger restarts.
+
+### Example systemd Unit
+
+```ini
+[Unit]
+Description=Spoti2 Recording Service
+After=network.target
+
+[Service]
+WorkingDirectory=/home/youruser/Documents/MyApps/scripts/spoti2
+ExecStart=/usr/bin/python -m spoti2_service --config /home/youruser/.config/spotify_splitter/config.json
+Restart=on-failure
+RestartSec=15
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=default.target
+```
+
+Enable and start with:
+
+```bash
+systemctl --user enable spoti2.service
+systemctl --user start spoti2.service
 ```
 
 ## ID3 Tagging API Integration

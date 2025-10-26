@@ -1,6 +1,7 @@
 import threading
 import logging
 from pathlib import Path
+from typing import Optional
 import typer
 import queue
 import time
@@ -11,6 +12,7 @@ from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.text import Text
 from rich.table import Table
+from click.core import ParameterSource
 
 from .audio import AudioStream, EnhancedAudioStream
 from .buffer_management import AdaptiveBufferManager
@@ -24,6 +26,12 @@ from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
 from .util import get_spotify_stream_info
 from .tagging_api import tag_output
+from .user_config import (
+    DEFAULT_CONFIG,
+    load_user_config,
+    save_user_config,
+    get_config_path,
+)
 try:
     from pydbus.errors import DBusError
 except Exception:  # pragma: no cover - fallback if gi is missing
@@ -36,9 +44,15 @@ app = typer.Typer(add_completion=False)
 @app.callback()
 def main_callback(
     ctx: typer.Context,
-    output: str = typer.Option(None, help="Directory to save tracks"),
-    format: str = typer.Option("mp3", help="Output format: mp3, flac, etc."),
+    output: Optional[str] = typer.Option(None, help="Directory to save tracks"),
+    format: Optional[str] = typer.Option(None, help="Output format: mp3, flac, etc."),
     verbose: bool = typer.Option(False, "-v", help="Enable debug logging"),
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Path to configuration file (defaults to ~/.config/spotify_splitter/config.json)",
+    ),
 ):
     """Record Spotify playback and split into tracks.
     
@@ -54,16 +68,16 @@ def main_callback(
         handlers=[RichHandler(rich_tracebacks=True)],
         force=True,
     )
-    if output:
-        ctx.obj = {
-            "output": output,
-            "format": format,
-        }
-    else:
-        ctx.obj = {
-            "output": None,
-            "format": format,
-        }
+    config = load_user_config(config_path)
+    resolved_output = Path(output).expanduser() if output else Path(config["output"]).expanduser()
+    resolved_format = format or config.get("format", "mp3")
+
+    ctx.obj = {
+        "output": str(resolved_output),
+        "format": resolved_format,
+        "config": config,
+        "config_path": config_path,
+    }
 
 
 @app.command()
@@ -146,6 +160,32 @@ def record(
     ),
 ):
     """Start recording until interrupted."""
+    config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
+
+    def resolve_param(name: str, current_value, config_key: Optional[str] = None):
+        """Prefer CLI value when explicitly provided, otherwise fall back to config."""
+        key = config_key or name
+        source = ctx.get_parameter_source(name)
+        if source in (ParameterSource.DEFAULT, ParameterSource.DEFAULT_MAP):
+            return config.get(key, current_value)
+        return current_value
+
+    dump_metadata = resolve_param("dump_metadata", dump_metadata)
+    player = resolve_param("player", player)
+    queue_size = resolve_param("queue_size", queue_size)
+    blocksize = resolve_param("blocksize", blocksize)
+    latency = resolve_param("latency", latency)
+    spotifyd_mode = resolve_param("spotifyd_mode", spotifyd_mode)
+    profile = resolve_param("profile", profile)
+    enable_adaptive = resolve_param("enable_adaptive", enable_adaptive)
+    enable_monitoring = resolve_param("enable_monitoring", enable_monitoring)
+    enable_metrics = resolve_param("enable_metrics", enable_metrics)
+    debug_mode = resolve_param("debug_mode", debug_mode)
+    max_buffer_size = resolve_param("max_buffer_size", max_buffer_size)
+    min_buffer_size = resolve_param("min_buffer_size", min_buffer_size)
+    playlist = resolve_param("playlist", playlist)
+    bundle_playlist = resolve_param("bundle_playlist", bundle_playlist)
+
     try:
         info = get_spotify_stream_info()
     except RuntimeError as e:
@@ -759,6 +799,236 @@ def profiles():
     console.print("  spotify-splitter record --profile desktop --adaptive")
     console.print("  spotify-splitter record --profile high_performance --debug-mode")
     console.print("  spotify-splitter record --spotifyd-mode  # Uses headless profile")
+
+
+@app.command()
+def configure(
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Where to write the configuration file (defaults to ~/.config/spotify_splitter/config.json)",
+    ),
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Default directory for recordings",
+    ),
+    format: Optional[str] = typer.Option(
+        None,
+        "--format",
+        "-f",
+        help="Preferred output format",
+    ),
+    player: Optional[str] = typer.Option(
+        None,
+        "--player",
+        "-p",
+        help="Default MPRIS player name",
+    ),
+    profile: Optional[str] = typer.Option(
+        None,
+        "--profile",
+        help="Default configuration profile to apply",
+    ),
+    spotifyd_mode: Optional[bool] = typer.Option(
+        None,
+        "--spotifyd-mode/--no-spotifyd-mode",
+        help="Toggle spotifyd headless optimisations by default",
+    ),
+    enable_adaptive: Optional[bool] = typer.Option(
+        None,
+        "--adaptive/--no-adaptive",
+        help="Toggle adaptive buffer management by default",
+    ),
+    enable_monitoring: Optional[bool] = typer.Option(
+        None,
+        "--monitoring/--no-monitoring",
+        help="Toggle buffer health monitoring by default",
+    ),
+    enable_metrics: Optional[bool] = typer.Option(
+        None,
+        "--metrics/--no-metrics",
+        help="Toggle performance metrics collection by default",
+    ),
+    debug_mode: Optional[bool] = typer.Option(
+        None,
+        "--debug/--no-debug",
+        help="Toggle debug dashboard by default",
+    ),
+    playlist: Optional[str] = typer.Option(
+        None,
+        "--playlist",
+        help="Default M3U playlist to update",
+    ),
+    bundle_playlist: Optional[bool] = typer.Option(
+        None,
+        "--bundle-playlist/--no-bundle-playlist",
+        help="Bundle playlist tracks into a compilation album by default",
+    ),
+    queue_size: Optional[int] = typer.Option(
+        None,
+        "--queue-size",
+        help="Default audio buffer queue size",
+    ),
+    blocksize: Optional[int] = typer.Option(
+        None,
+        "--blocksize",
+        help="Default PortAudio blocksize",
+    ),
+    latency: Optional[float] = typer.Option(
+        None,
+        "--latency",
+        help="Default latency hint for the audio stream",
+    ),
+    non_interactive: bool = typer.Option(
+        False,
+        "--non-interactive",
+        help="Do not prompt; rely solely on provided flags",
+    ),
+):
+    """Create or update a saved configuration for simplified usage."""
+    config_file = get_config_path(config_path)
+    existing_file = config_file.exists()
+    existing = load_user_config(config_path)
+    prompt_user = not non_interactive
+
+    def prompt_text(
+        key: str,
+        provided: Optional[str],
+        prompt_message: str,
+        allow_empty: bool = False,
+    ) -> Optional[str]:
+        if provided is not None:
+            return provided
+        if not prompt_user:
+            return existing.get(key)
+        default_value = existing.get(key) or DEFAULT_CONFIG.get(key) or ""
+        value = typer.prompt(prompt_message, default=default_value)
+        if not value and not allow_empty:
+            return default_value
+        return value if value else None
+
+    def prompt_bool(
+        key: str,
+        provided: Optional[bool],
+        prompt_message: str,
+    ) -> bool:
+        if provided is not None:
+            return provided
+        if not prompt_user:
+            return bool(existing.get(key, DEFAULT_CONFIG.get(key, False)))
+        default_value = bool(existing.get(key, DEFAULT_CONFIG.get(key, False)))
+        return typer.confirm(prompt_message, default=default_value)
+
+    updates = {}
+
+    output_value = prompt_text(
+        "output",
+        output,
+        "Where should recordings be saved?",
+    )
+    if not output_value:
+        output_value = existing.get("output") or DEFAULT_CONFIG["output"]
+    updates["output"] = str(Path(output_value).expanduser())
+
+    format_value = prompt_text(
+        "format",
+        format,
+        "Preferred audio format",
+    )
+    updates["format"] = format_value or existing.get("format") or DEFAULT_CONFIG["format"]
+
+    player_value = prompt_text(
+        "player",
+        player,
+        "Default MPRIS player name",
+    )
+    updates["player"] = player_value or existing.get("player") or DEFAULT_CONFIG["player"]
+
+    profile_value = prompt_text(
+        "profile",
+        profile,
+        "Default profile (auto/headless/desktop/high_performance)",
+    )
+    updates["profile"] = profile_value or existing.get("profile") or DEFAULT_CONFIG["profile"]
+
+    updates["spotifyd_mode"] = prompt_bool(
+        "spotifyd_mode",
+        spotifyd_mode,
+        "Enable spotifyd mode by default?",
+    )
+    updates["enable_adaptive"] = prompt_bool(
+        "enable_adaptive",
+        enable_adaptive,
+        "Enable adaptive buffer management by default?",
+    )
+    updates["enable_monitoring"] = prompt_bool(
+        "enable_monitoring",
+        enable_monitoring,
+        "Enable buffer health monitoring by default?",
+    )
+    updates["enable_metrics"] = prompt_bool(
+        "enable_metrics",
+        enable_metrics,
+        "Enable metrics collection by default?",
+    )
+    updates["debug_mode"] = prompt_bool(
+        "debug_mode",
+        debug_mode,
+        "Enable debug dashboard by default?",
+    )
+
+    playlist_value = prompt_text(
+        "playlist",
+        playlist,
+        "Playlist file to update (enter to skip)",
+        allow_empty=True,
+    )
+    updates["playlist"] = (
+        str(Path(playlist_value).expanduser()) if playlist_value else None
+    )
+    updates["bundle_playlist"] = prompt_bool(
+        "bundle_playlist",
+        bundle_playlist,
+        "Bundle playlist tracks into a compilation album by default?",
+    )
+
+    if queue_size is not None:
+        updates["queue_size"] = queue_size
+    if blocksize is not None:
+        updates["blocksize"] = blocksize
+    if latency is not None:
+        updates["latency"] = latency
+
+    merged = existing.copy()
+    merged.update(updates)
+
+    saved_path = save_user_config(merged, config_path)
+
+    typer.echo(f"Configuration saved to {saved_path}")
+    typer.echo("Defaults applied to 'spotify-splitter record':")
+    summary_keys = [
+        "output",
+        "format",
+        "player",
+        "profile",
+        "spotifyd_mode",
+        "enable_adaptive",
+        "enable_monitoring",
+        "enable_metrics",
+        "debug_mode",
+        "playlist",
+        "bundle_playlist",
+    ]
+    for key in summary_keys:
+        typer.echo(f"  {key}: {merged.get(key)}")
+
+    if not existing_file:
+        typer.echo(
+            "\nTip: re-run 'spotify-splitter configure' any time you want to update these defaults."
+        )
 
 
 if __name__ == "__main__":
