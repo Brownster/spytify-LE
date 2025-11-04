@@ -467,8 +467,9 @@ def record(
         
         live.update(create_enhanced_ui())
 
-    # Get allow_overwrite from config
+    # Get allow_overwrite and lastfm_api_key from config
     allow_overwrite = config.get("allow_overwrite", False)
+    lastfm_api_key = config.get("lastfm_api_key")
 
     manager = SegmentManager(
         samplerate=info.samplerate,
@@ -484,6 +485,7 @@ def record(
         max_processing_retries=3,
         enable_graceful_degradation=True,
         allow_overwrite=allow_overwrite,
+        lastfm_api_key=lastfm_api_key,
     )
     
     # Flush any cached data from previous runs

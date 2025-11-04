@@ -389,6 +389,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                             "Starting MPRIS",
                             "already exists",
                             "Recording",
+                            "LastFM",
+                            "Fetched",
                         ]
 
                         filtered_lines = []
@@ -811,6 +813,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
       width: 18px;
       height: 18px;
       cursor: pointer;
+      accent-color: {p["accent"]};
     }}
 
     /* Buttons */

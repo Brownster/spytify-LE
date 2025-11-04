@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # LastFM API public key (read-only, safe to include)
 # You can register your own at https://www.last.fm/api/account/create
-DEFAULT_API_KEY = "YOUR_API_KEY_HERE"  # Replace with actual key
+DEFAULT_API_KEY = "450e8b940228b549b766270f90d67740"
 LASTFM_API_URL = "http://ws.audioscrobbler.com/2.0/"
 
 

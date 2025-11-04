@@ -127,6 +127,12 @@ class SegmentManager:
             "SegmentManager initialized with error recovery: enabled=%s, max_retries=%d, graceful_degradation=%s",
             enable_error_recovery, max_processing_retries, enable_graceful_degradation
         )
+
+        # Log LastFM configuration status
+        if self.lastfm_api_key:
+            logger.info("LastFM API configured - will fetch year and genre metadata")
+        else:
+            logger.warning("LastFM API key not configured - year and genre tags will not be fetched")
         
     def flush_cache(self) -> None:
         """Clear all cached data for clean startup."""
@@ -593,22 +599,28 @@ class SegmentManager:
             genre = track_info.genre
 
             if not year or not genre:
-                try:
-                    lastfm = get_lastfm_client(api_key=self.lastfm_api_key)
-                    lastfm_metadata = lastfm.get_track_metadata(
-                        track_info.artist,
-                        track_info.title,
-                        track_info.album
-                    )
-                    if not year and lastfm_metadata.year:
-                        year = lastfm_metadata.year
-                    if not genre and lastfm_metadata.genres:
-                        # Join multiple genres with semicolon
-                        genre = "; ".join(lastfm_metadata.genres)
-                    logger.debug("LastFM metadata for %s - %s: year=%s, genres=%s",
-                               track_info.artist, track_info.title, year, genre)
-                except Exception as e:
-                    logger.warning("Failed to fetch LastFM metadata: %s", e)
+                if not self.lastfm_api_key:
+                    logger.debug("LastFM API key not set, skipping metadata fetch")
+                else:
+                    try:
+                        lastfm = get_lastfm_client(api_key=self.lastfm_api_key)
+                        lastfm_metadata = lastfm.get_track_metadata(
+                            track_info.artist,
+                            track_info.title,
+                            track_info.album
+                        )
+                        if not year and lastfm_metadata.year:
+                            year = lastfm_metadata.year
+                            logger.info("Fetched year from LastFM: %s", year)
+                        if not genre and lastfm_metadata.genres:
+                            # Join multiple genres with semicolon
+                            genre = "; ".join(lastfm_metadata.genres)
+                            logger.info("Fetched genres from LastFM: %s", genre)
+                        if not lastfm_metadata.year and not lastfm_metadata.genres:
+                            logger.debug("No LastFM metadata available for %s - %s",
+                                       track_info.artist, track_info.title)
+                    except Exception as e:
+                        logger.warning("Failed to fetch LastFM metadata: %s", e)
 
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
