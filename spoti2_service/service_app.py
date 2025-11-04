@@ -56,31 +56,76 @@ class RecorderSupervisor:
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
         self._restart_event = threading.Event()
+        self._pause_event = threading.Event()
+        self._manual_stop = False  # Track if user manually stopped recording
         self._status_lock = threading.Lock()
         self._status: Dict[str, str] = {
             "state": "stopped",
-            "details": "Service not started",
+            "details": "Click Start to begin recording",
             "last_exit": "",
+            "current_track": "",
         }
+        self._verbose_logging = False  # Toggle for minimal vs verbose logging
 
     # Public API -------------------------------------------------------------
     def start(self) -> None:
+        """Start or resume recording."""
+        self._manual_stop = False
         if self._thread and self._thread.is_alive():
-            logging.debug("RecorderSupervisor already running")
+            if self._pause_event.is_set():
+                # Resume from pause
+                logging.info("Resuming recording")
+                self._pause_event.clear()
+                self._set_status("running", "Recording resumed")
+            else:
+                # Restart if stopped
+                logging.info("Restarting recording")
+                self._restart_event.set()
             return
+
         logging.info("Starting RecorderSupervisor thread")
         self._stop_event.clear()
+        self._pause_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
-        logging.info("Stopping RecorderSupervisor")
+        """Stop recording (user-initiated)."""
+        logging.info("Stopping RecorderSupervisor (manual stop)")
+        self._manual_stop = True
         self._stop_event.set()
         self._restart_event.set()
+        self._pause_event.clear()
         self._terminate_process()
-        if self._thread:
-            self._thread.join(timeout=5.0)
-        self._set_status("stopped", "Service stopped by user")
+        self._set_status("stopped", "⏹️ Recording stopped")
+
+    def pause(self) -> None:
+        """Pause recording."""
+        if self._process and not self._pause_event.is_set():
+            logging.info("Pausing recording")
+            self._pause_event.set()
+            try:
+                self._process.send_signal(signal.SIGSTOP)
+                self._set_status("paused", "⏸️ Recording paused")
+            except Exception as e:
+                logging.warning("Failed to pause process: %s", e)
+                self._set_status("error", f"❌ Failed to pause: {e}")
+        else:
+            logging.debug("Cannot pause - no active recording")
+
+    def resume(self) -> None:
+        """Resume from pause."""
+        if self._process and self._pause_event.is_set():
+            logging.info("Resuming recording")
+            self._pause_event.clear()
+            try:
+                self._process.send_signal(signal.SIGCONT)
+                self._set_status("running", "▶️ Recording resumed")
+            except Exception as e:
+                logging.warning("Failed to resume process: %s", e)
+                self._set_status("error", f"❌ Failed to resume: {e}")
+        else:
+            logging.debug("Cannot resume - not paused")
 
     def request_restart(self, reason: str = "Configuration updated") -> None:
         logging.info("Restart requested: %s", reason)
@@ -92,11 +137,22 @@ class RecorderSupervisor:
         with self._status_lock:
             return dict(self._status)
 
+    def set_verbose_logging(self, enabled: bool) -> None:
+        """Toggle verbose logging mode."""
+        self._verbose_logging = enabled
+        logging.info("Verbose logging %s", "enabled" if enabled else "disabled")
+
+    def get_verbose_logging(self) -> bool:
+        """Get current verbose logging state."""
+        return self._verbose_logging
+
     # Internal helpers -------------------------------------------------------
-    def _set_status(self, state: str, details: str) -> None:
+    def _set_status(self, state: str, details: str, current_track: str = "") -> None:
         with self._status_lock:
             self._status["state"] = state
             self._status["details"] = details
+            if current_track:
+                self._status["current_track"] = current_track
 
     def _terminate_process(self) -> None:
         if not self._process:
@@ -141,8 +197,6 @@ class RecorderSupervisor:
             record_args.append("--no-adaptive")
         if config.get("debug_mode"):
             record_args.append("--debug-mode")
-        if config.get("spotifyd_mode"):
-            record_args.append("--spotifyd-mode")
         if config.get("player") and config.get("player") != DEFAULT_CONFIG["player"]:
             record_args.extend(["--player", config["player"]])
         if config.get("profile") and config.get("profile") != DEFAULT_CONFIG["profile"]:
@@ -169,7 +223,7 @@ class RecorderSupervisor:
 
             log_path = LOG_DIR / "recorder.log"
             stdout_file = log_path.open("a", encoding="utf-8")
-            self._set_status("starting", "Launching recorder")
+            self._set_status("starting", "⏳ Starting recorder...")
             logging.info("Starting spotify-splitter: %s", " ".join(command))
 
             try:
@@ -187,6 +241,18 @@ class RecorderSupervisor:
                 continue
 
             start_time = time.time()
+
+            # Give process a moment to start and verify it's running
+            time.sleep(2.5)
+            if self._process.poll() is None:
+                self._set_status("running", "🎵 Recording - waiting for Spotify playback...")
+                logging.info("Recorder started successfully")
+            else:
+                early_exit = self._process.poll()
+                logging.error("Recorder exited immediately with code %s", early_exit)
+                stdout_file.close()
+                continue
+
             exit_code = None
             while exit_code is None and not self._restart_event.is_set() and not self._stop_event.is_set():
                 exit_code = self._process.poll()
@@ -206,6 +272,11 @@ class RecorderSupervisor:
             runtime = time.time() - start_time
             stdout_file.close()
             self._process = None
+
+            # Check if manually stopped - don't auto-restart
+            if self._manual_stop:
+                self._set_status("stopped", "Recording stopped by user")
+                break
 
             if exit_code == 0:
                 self._set_status("stopped", "Recorder exited normally")
@@ -231,24 +302,57 @@ class RecorderSupervisor:
 
 
 class Spoti2RequestHandler(BaseHTTPRequestHandler):
-    """Simple retro-styled configuration UI."""
+    """Modern 3-tab web UI inspired by spy-spotify design."""
 
-    server_version = "Spoti2Service/0.1"
-    winmx_palette = {
-        "background": "#0d1321",
-        "panel": "#111d34",
-        "accent": "#32c8ff",
-        "accent_dark": "#1f9ad6",
-        "text": "#d9f0ff",
+    server_version = "Spoti2Service/2.0"
+
+    # Modern color palette
+    palette = {
+        "bg": "#0d1117",
+        "panel": "#161b22",
+        "border": "#30363d",
+        "accent": "#58a6ff",
+        "accent_hover": "#79c0ff",
+        "text": "#c9d1d9",
+        "text_muted": "#8b949e",
+        "success": "#3fb950",
+        "warning": "#d29922",
+        "error": "#f85149",
     }
 
     def do_GET(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
-        if self.path not in ("/", "/status"):
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-        if self.path == "/status":
+        if self.path == "/":
+            self._serve_index()
+        elif self.path == "/status":
             self._send_json(self.server.app.supervisor.status())
-            return
+        elif self.path == "/logs":
+            self._serve_logs()
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
+        if self.path == "/update":
+            self._handle_update()
+        elif self.path == "/restart":
+            self._handle_restart()
+        elif self.path == "/start":
+            self._handle_start()
+        elif self.path == "/stop":
+            self._handle_stop()
+        elif self.path == "/pause":
+            self._handle_pause()
+        elif self.path == "/resume":
+            self._handle_resume()
+        elif self.path == "/toggle-verbose":
+            self._handle_toggle_verbose()
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A003
+        logging.info("HTTP %s - %s", self.address_string(), format % args)
+
+    # Helpers -----------------------------------------------------------------
+    def _serve_index(self) -> None:
         config = load_user_config(self.server.app.config_path)
         status = self.server.app.supervisor.status()
         body = self._render_index(config, status)
@@ -258,18 +362,103 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
 
-    def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
-        if self.path == "/update":
-            self._handle_update()
-        elif self.path == "/restart":
-            self._handle_restart()
-        else:
-            self.send_error(HTTPStatus.NOT_FOUND)
+    def _serve_logs(self) -> None:
+        """Serve recent filtered log entries and update status based on activity."""
+        try:
+            log_path = LOG_DIR / "recorder.log"
+            if log_path.exists():
+                verbose = self.server.app.supervisor.get_verbose_logging()
 
-    def log_message(self, format: str, *args) -> None:  # noqa: A003
-        logging.info("HTTP %s - %s", self.address_string(), format % args)
+                with open(log_path, "r") as f:
+                    lines = f.readlines()
+                    recent_logs = lines[-200:] if len(lines) > 200 else lines
 
-    # Helpers -----------------------------------------------------------------
+                    # Track change detection for status updates
+                    track_change_keywords = ["TRACK CHANGE CALLBACK:", "Track changed:"]
+                    last_track = None
+
+                    if verbose:
+                        # Verbose mode: show more log events
+                        verbose_keywords = [
+                            "Saved:",
+                            "ERROR:",
+                            "WARNING:",
+                            "Track changed:",
+                            "Starting MPRIS",
+                            "already exists",
+                            "Recording",
+                        ]
+
+                        filtered_lines = []
+                        for line in recent_logs:
+                            # Extract current track
+                            for keyword in track_change_keywords:
+                                if keyword in line:
+                                    try:
+                                        parts = line.split(keyword)
+                                        if len(parts) > 1:
+                                            last_track = parts[1].strip()
+                                    except:
+                                        pass
+
+                            # Clean duplicates
+                            cleaned = line.strip()
+                            cleaned = cleaned.replace("INFO: INFO:", "INFO:")
+                            cleaned = cleaned.replace("INFO INFO:", "INFO:")
+
+                            if any(keyword in line for keyword in verbose_keywords):
+                                filtered_lines.append(cleaned)
+
+                        logs = "\n".join(filtered_lines[-50:]) if filtered_lines else "🎵 Waiting for tracks to record..."
+                    else:
+                        # Minimal mode: only show essential status events
+                        essential_keywords = [
+                            "Saved:",           # Track saved
+                            "ERROR:",           # Critical errors only
+                            "already exists",   # Duplicate detection
+                        ]
+
+                        filtered_lines = []
+                        for line in recent_logs:
+                            # Extract current track
+                            for keyword in track_change_keywords:
+                                if keyword in line:
+                                    try:
+                                        parts = line.split(keyword)
+                                        if len(parts) > 1:
+                                            last_track = parts[1].strip()
+                                    except:
+                                        pass
+
+                            # Clean and filter
+                            cleaned = line.strip()
+                            cleaned = cleaned.replace("INFO: INFO:", "INFO:")
+                            cleaned = cleaned.replace("INFO INFO:", "INFO:")
+
+                            if any(keyword in line for keyword in essential_keywords):
+                                # Remove INFO/DEBUG prefixes for cleaner display
+                                for prefix in ["INFO:", "DEBUG:"]:
+                                    if cleaned.startswith(prefix):
+                                        cleaned = cleaned[len(prefix):].strip()
+                                filtered_lines.append(cleaned)
+
+                        logs = "\n".join(filtered_lines[-30:]) if filtered_lines else "🎵 Waiting for tracks to record..."
+
+                    # Update status if we detected a track change
+                    if last_track and self.server.app.supervisor._process:
+                        status = self.server.app.supervisor.status()
+                        if status.get("state") == "running":
+                            self.server.app.supervisor._set_status(
+                                "running",
+                                f"🎵 Recording: {last_track}"
+                            )
+            else:
+                logs = "No logs available - recorder not started"
+
+            self._send_json({"logs": logs})
+        except Exception as e:
+            self._send_json({"logs": f"Error reading logs: {e}"})
+
     def _handle_update(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
         payload = self.rfile.read(length).decode("utf-8")
@@ -290,11 +479,12 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             "profile": get_value("profile", config.get("profile")),
             "playlist": get_value("playlist") or None,
             "bundle_playlist": get_bool("bundle_playlist"),
-            "spotifyd_mode": get_bool("spotifyd_mode"),
             "enable_adaptive": get_bool("enable_adaptive"),
             "enable_monitoring": get_bool("enable_monitoring"),
             "enable_metrics": get_bool("enable_metrics"),
             "debug_mode": get_bool("debug_mode"),
+            "lastfm_api_key": get_value("lastfm_api_key") or None,
+            "allow_overwrite": get_bool("allow_overwrite"),
         }
 
         merged = config.copy()
@@ -317,6 +507,48 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Location", "/")
         self.end_headers()
 
+    def _handle_start(self) -> None:
+        """Start recording."""
+        self.server.app.supervisor.start()
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+    def _handle_stop(self) -> None:
+        """Stop recording."""
+        self.server.app.supervisor.stop()
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+    def _handle_pause(self) -> None:
+        """Pause recording."""
+        self.server.app.supervisor.pause()
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+    def _handle_resume(self) -> None:
+        """Resume recording."""
+        self.server.app.supervisor.resume()
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+    def _handle_toggle_verbose(self) -> None:
+        """Toggle verbose logging mode."""
+        length = int(self.headers.get("Content-Length", "0"))
+        payload = self.rfile.read(length).decode("utf-8")
+        form = parse_qs(payload)
+
+        # Checkbox is present if checked, absent if unchecked
+        verbose = "verbose" in form
+        self.server.app.supervisor.set_verbose_logging(verbose)
+
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", "/")
+        self.end_headers()
+
     def _send_json(self, payload: Dict[str, str]) -> None:
         body = json.dumps(payload)
         self.send_response(HTTPStatus.OK)
@@ -326,178 +558,515 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode("utf-8"))
 
     def _render_index(self, config: Dict[str, str], status: Dict[str, str]) -> str:
-        palette = self.winmx_palette
+        p = self.palette
+
         def checked(flag: bool) -> str:
             return "checked" if flag else ""
+
+        state = status.get("state", "unknown")
+        state_color = {
+            "running": p["success"],
+            "starting": p["warning"],
+            "stopped": p["text_muted"],
+            "paused": p["warning"],
+            "waiting": p["warning"],
+            "error": p["error"],
+        }.get(state, p["text"])
 
         return f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Spoti2 Control Deck</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spoti2 - Linux Spotify Recorder</title>
   <style>
+    * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+
     body {{
-      background: radial-gradient(circle at top, {palette["background"]}, #000);
-      color: {palette["text"]};
-      font-family: "Trebuchet MS", Tahoma, sans-serif;
-      margin: 0;
-      padding: 0;
+      background: {p["bg"]};
+      color: {p["text"]};
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      min-height: 100vh;
     }}
+
     header {{
-      padding: 20px;
-      text-align: center;
-      background: linear-gradient(90deg, {palette["accent_dark"]}, {palette["accent"]});
-      box-shadow: 0 0 20px #000;
+      background: {p["panel"]};
+      border-bottom: 1px solid {p["border"]};
+      padding: 1.5rem 2rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }}
+
     header h1 {{
-      margin: 0;
-      letter-spacing: 3px;
-      text-transform: uppercase;
+      font-size: 1.75rem;
+      font-weight: 600;
+      color: {p["accent"]};
+      margin-bottom: 0.25rem;
     }}
-    .container {{
-      max-width: 960px;
-      margin: 30px auto 40px;
-      padding: 0 20px;
-    }}
-    .panel {{
-      background: {palette["panel"]};
-      border: 1px solid {palette["accent_dark"]};
-      border-radius: 10px;
-      box-shadow: 0 0 15px rgba(0,0,0,0.6);
-      padding: 20px 30px;
-      margin-bottom: 25px;
-    }}
-    .panel h2 {{
-      margin-top: 0;
-      text-transform: uppercase;
-      letter-spacing: 2px;
-      color: {palette["accent"]};
-    }}
-    label {{
-      display: block;
-      margin-bottom: 10px;
+
+    header p {{
+      color: {p["text_muted"]};
       font-size: 0.9rem;
     }}
+
+    .container {{
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }}
+
+    /* Tab Navigation */
+    .tabs {{
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 2rem;
+      border-bottom: 2px solid {p["border"]};
+    }}
+
+    .tab-button {{
+      background: none;
+      border: none;
+      color: {p["text_muted"]};
+      padding: 1rem 2rem;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      transition: all 0.2s;
+    }}
+
+    .tab-button:hover {{
+      color: {p["text"]};
+      background: rgba(255,255,255,0.05);
+    }}
+
+    .tab-button.active {{
+      color: {p["accent"]};
+      border-bottom-color: {p["accent"]};
+    }}
+
+    .tab-content {{
+      display: none;
+    }}
+
+    .tab-content.active {{
+      display: block;
+    }}
+
+    /* Panels */
+    .panel {{
+      background: {p["panel"]};
+      border: 1px solid {p["border"]};
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }}
+
+    .panel h2 {{
+      font-size: 1.25rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+      color: {p["text"]};
+    }}
+
+    /* Status Display */
+    .status-display {{
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      padding: 1rem;
+      background: rgba(88, 166, 255, 0.1);
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }}
+
+    .status-indicator {{
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: {state_color};
+      animation: pulse 2s infinite;
+    }}
+
+    @keyframes pulse {{
+      0%, 100% {{ opacity: 1; }}
+      50% {{ opacity: 0.5; }}
+    }}
+
+    .status-text {{
+      flex: 1;
+    }}
+
+    .status-text strong {{
+      color: {p["accent"]};
+      text-transform: capitalize;
+    }}
+
+    .status-details {{
+      color: {p["text_muted"]};
+      font-size: 0.9rem;
+    }}
+
+    /* Recording Log */
+    .log-container {{
+      background: {p["bg"]};
+      border: 1px solid {p["border"]};
+      border-radius: 6px;
+      padding: 1rem;
+      max-height: 400px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+    }}
+
+    .log-container::-webkit-scrollbar {{
+      width: 8px;
+    }}
+
+    .log-container::-webkit-scrollbar-track {{
+      background: {p["panel"]};
+    }}
+
+    .log-container::-webkit-scrollbar-thumb {{
+      background: {p["border"]};
+      border-radius: 4px;
+    }}
+
+    /* Forms */
+    .form-grid {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }}
+
+    label {{
+      display: block;
+      margin-bottom: 1rem;
+    }}
+
+    label span {{
+      display: block;
+      margin-bottom: 0.5rem;
+      color: {p["text"]};
+      font-weight: 500;
+    }}
+
     input[type="text"], select {{
       width: 100%;
-      padding: 8px 10px;
-      border: 1px solid {palette["accent_dark"]};
+      padding: 0.75rem;
+      background: {p["bg"]};
+      border: 1px solid {p["border"]};
       border-radius: 6px;
-      background: rgba(0,0,0,0.35);
-      color: {palette["text"]};
-      margin-top: 4px;
+      color: {p["text"]};
+      font-size: 0.95rem;
+      transition: border-color 0.2s;
     }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 20px;
+
+    input[type="text"]:focus, select:focus {{
+      outline: none;
+      border-color: {p["accent"]};
     }}
-    .checkboxes label {{
-      display: inline-flex;
-      align-items: center;
-      margin-right: 20px;
-    }}
-    .buttons {{
+
+    .checkbox-group {{
       display: flex;
-      gap: 15px;
-      margin-top: 20px;
+      flex-wrap: wrap;
+      gap: 1.5rem;
+      margin: 1rem 0;
     }}
+
+    .checkbox-group label {{
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      margin: 0;
+    }}
+
+    input[type="checkbox"] {{
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }}
+
+    /* Buttons */
+    .button-group {{
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+    }}
+
     button {{
       flex: 1;
-      padding: 12px;
+      padding: 0.875rem 1.5rem;
+      background: linear-gradient(135deg, {p["accent"]}, {p["accent_hover"]});
       border: none;
-      border-radius: 999px;
-      background: linear-gradient(90deg, {palette["accent_dark"]}, {palette["accent"]});
-      color: #001219;
+      border-radius: 6px;
+      color: #fff;
       font-size: 1rem;
-      text-transform: uppercase;
-      letter-spacing: 2px;
+      font-weight: 600;
       cursor: pointer;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-      transition: transform 0.1s ease, box-shadow 0.1s ease;
+      transition: transform 0.2s, box-shadow 0.2s;
     }}
+
     button:hover {{
       transform: translateY(-2px);
-      box-shadow: 0 6px 18px rgba(0,0,0,0.6);
+      box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
     }}
-    .status {{
-      font-size: 1.1rem;
-      margin-bottom: 10px;
+
+    button:active {{
+      transform: translateY(0);
     }}
-    .status span {{
-      color: {palette["accent"]};
+
+    button.secondary {{
+      background: {p["panel"]};
+      border: 1px solid {p["border"]};
+      color: {p["text"]};
     }}
+
+    button.secondary:hover {{
+      background: {p["border"]};
+      box-shadow: none;
+    }}
+
+    .help-text {{
+      color: {p["text_muted"]};
+      font-size: 0.875rem;
+      margin-top: 0.5rem;
+    }}
+
     footer {{
       text-align: center;
-      color: rgba(255,255,255,0.55);
-      padding-bottom: 30px;
-      font-size: 0.85rem;
+      padding: 2rem;
+      color: {p["text_muted"]};
+      font-size: 0.875rem;
+    }}
+
+    footer a {{
+      color: {p["accent"]};
+      text-decoration: none;
+    }}
+
+    footer a:hover {{
+      text-decoration: underline;
     }}
   </style>
 </head>
 <body>
   <header>
-    <h1>Spoti2 Control Deck</h1>
-    <p>Retro vibes for your recording rig</p>
+    <h1>🎵 Spoti2</h1>
+    <p>Linux Spotify Desktop Recorder with LastFM Metadata</p>
   </header>
-  <div class="container">
-    <section class="panel">
-      <h2>Status Monitor</h2>
-      <div class="status">State: <span>{status.get("state", "unknown").title()}</span></div>
-      <div>{status.get("details", "")}</div>
-    </section>
 
-    <form class="panel" method="post" action="/update">
-      <h2>Session Settings</h2>
-      <div class="grid">
+  <div class="container">
+    <!-- Tab Navigation -->
+    <div class="tabs">
+      <button class="tab-button active" onclick="switchTab('record')">Record</button>
+      <button class="tab-button" onclick="switchTab('settings')">Settings</button>
+      <button class="tab-button" onclick="switchTab('advanced')">Advanced</button>
+    </div>
+
+    <!-- Tab 1: Record -->
+    <div id="tab-record" class="tab-content active">
+      <div class="panel">
+        <h2>Recording Status</h2>
+        <div class="status-display">
+          <div class="status-indicator"></div>
+          <div class="status-text">
+            <div><strong>{state}</strong></div>
+            <div class="status-details">{status.get("details", "")}</div>
+          </div>
+        </div>
+
+        <div class="button-group">
+          <form method="post" action="/start" style="flex: 1;">
+            <button type="submit">▶ Start</button>
+          </form>
+          <form method="post" action="/pause" style="flex: 1;">
+            <button type="submit" class="secondary">⏸ Pause</button>
+          </form>
+          <form method="post" action="/resume" style="flex: 1;">
+            <button type="submit" class="secondary">▶▶ Resume</button>
+          </form>
+          <form method="post" action="/stop" style="flex: 1;">
+            <button type="submit" class="secondary">⏹ Stop</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Recording Log</h2>
+        <div class="log-container" id="log-display">
+          <div style="color: {p["text_muted"]};">Loading logs...</div>
+        </div>
+
+        <form method="post" action="/toggle-verbose" style="margin-top: 1rem;">
+          <div class="checkbox-group">
+            <label>
+              <input type="checkbox" name="verbose" {checked(self.server.app.supervisor.get_verbose_logging())} onchange="this.form.submit()">
+              <span style="color: {p["text_muted"]};">Show verbose logs (includes track changes, MPRIS events, warnings)</span>
+            </label>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Tab 2: Settings -->
+    <div id="tab-settings" class="tab-content">
+      <form class="panel" method="post" action="/update">
+        <h2>Output Settings</h2>
+        <div class="form-grid">
+          <label>
+            <span>Output Directory</span>
+            <input type="text" name="output" value="{config.get("output", DEFAULT_CONFIG["output"])}" />
+            <div class="help-text">Where recorded tracks will be saved</div>
+          </label>
+
+          <label>
+            <span>Audio Format</span>
+            <select name="format">
+              {"".join(self._select_options(config.get("format", "mp3"), ["mp3","flac","wav","ogg"]))}
+            </select>
+            <div class="help-text">Output file format</div>
+          </label>
+        </div>
+
+        <div class="checkbox-group" style="margin-top: 1rem;">
+          <label>
+            <input type="checkbox" name="allow_overwrite" {checked(config.get("allow_overwrite", False))}>
+            <span>Allow Overwriting Existing Files</span>
+          </label>
+        </div>
+        <div class="help-text" style="margin-top: 0.5rem;">When enabled, tracks will be re-recorded even if they already exist (useful if previous recordings were incomplete)</div>
+
+        <h2 style="margin-top: 2rem;">Metadata Settings</h2>
+        <div class="form-grid">
+          <label>
+            <span>LastFM API Key</span>
+            <input type="text" name="lastfm_api_key" value="{config.get("lastfm_api_key", "") or ""}" placeholder="Enter your LastFM API key" />
+            <div class="help-text">Required for fetching year and genre tags. <a href="https://www.last.fm/api/account/create" target="_blank" style="color: {p["accent"]};">Get one here</a></div>
+          </label>
+        </div>
+
+        <h2 style="margin-top: 2rem;">Playlist Settings</h2>
+        <div class="form-grid">
+          <label>
+            <span>Playlist File (optional)</span>
+            <input type="text" name="playlist" value="{config.get("playlist", "") or ""}" placeholder="/path/to/playlist.m3u" />
+            <div class="help-text">Generate an M3U playlist file</div>
+          </label>
+        </div>
+
+        <div class="checkbox-group">
+          <label>
+            <input type="checkbox" name="bundle_playlist" {checked(config.get("bundle_playlist", False))}>
+            <span>Bundle as Compilation Album</span>
+          </label>
+        </div>
+
+        <div class="button-group">
+          <button type="submit">Save Settings</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Tab 3: Advanced -->
+    <div id="tab-advanced" class="tab-content">
+      <form class="panel" method="post" action="/update">
+        <h2>Performance Settings</h2>
+
         <label>
-          Output Directory
-          <input type="text" name="output" value="{config.get("output", DEFAULT_CONFIG["output"])}" />
-        </label>
-        <label>
-          Playlist File (optional)
-          <input type="text" name="playlist" value="{config.get("playlist", "") or ""}" />
-        </label>
-        <label>
-          Audio Format
-          <select name="format">
-            {"".join(self._select_options(config.get("format", "mp3"), ["mp3","flac","wav","ogg"]))}
-          </select>
-        </label>
-        <label>
-          Player Name
-          <input type="text" name="player" value="{config.get("player", DEFAULT_CONFIG["player"])}" />
-        </label>
-        <label>
-          Profile
+          <span>Configuration Profile</span>
           <select name="profile">
             {"".join(self._select_options(config.get("profile", "auto"), ["auto","desktop","headless","high_performance"]))}
           </select>
+          <div class="help-text">Optimize for your system</div>
         </label>
-      </div>
-      <div class="checkboxes" style="margin-top: 20px;">
-        <label><input type="checkbox" name="bundle_playlist" {checked(config.get("bundle_playlist", False))}> Bundle Playlist</label>
-        <label><input type="checkbox" name="spotifyd_mode" {checked(config.get("spotifyd_mode", False))}> Spotifyd Mode</label>
-        <label><input type="checkbox" name="enable_adaptive" {checked(config.get("enable_adaptive", True))}> Adaptive Buffers</label>
-        <label><input type="checkbox" name="enable_monitoring" {checked(config.get("enable_monitoring", False))}> Buffer Monitoring</label>
-        <label><input type="checkbox" name="enable_metrics" {checked(config.get("enable_metrics", False))}> Metrics</label>
-        <label><input type="checkbox" name="debug_mode" {checked(config.get("debug_mode", False))}> Debug Dashboard</label>
-      </div>
-      <div class="buttons">
-        <button type="submit">Save Changes</button>
-      </div>
-    </form>
 
-    <form class="panel" method="post" action="/restart">
-      <h2>Control</h2>
-      <p>Need to apply changes or unstick the recorder? Give it a gentle nudge.</p>
-      <div class="buttons">
-        <button type="submit">Restart Recorder</button>
-      </div>
-    </form>
+        <div class="checkbox-group" style="margin-top: 1.5rem;">
+          <label>
+            <input type="checkbox" name="enable_adaptive" {checked(config.get("enable_adaptive", True))}>
+            <span>Adaptive Buffers</span>
+          </label>
+          <label>
+            <input type="checkbox" name="enable_monitoring" {checked(config.get("enable_monitoring", False))}>
+            <span>Buffer Monitoring</span>
+          </label>
+          <label>
+            <input type="checkbox" name="enable_metrics" {checked(config.get("enable_metrics", False))}>
+            <span>Performance Metrics</span>
+          </label>
+          <label>
+            <input type="checkbox" name="debug_mode" {checked(config.get("debug_mode", False))}>
+            <span>Debug Mode</span>
+          </label>
+        </div>
+
+        <h2 style="margin-top: 2rem;">Player Settings</h2>
+
+        <label>
+          <span>MPRIS Player Name</span>
+          <input type="text" name="player" value="{config.get("player", DEFAULT_CONFIG["player"])}" />
+          <div class="help-text">Usually "spotify" for Spotify desktop client</div>
+        </label>
+
+        <div class="button-group">
+          <button type="submit">Save Advanced Settings</button>
+        </div>
+      </form>
+    </div>
   </div>
-  <footer>Spoti2 Service &mdash; built for hands-off recording sessions</footer>
+
+  <footer>
+    <p>Spoti2 &mdash; Linux Spotify Recorder | <a href="https://github.com/Brownster/spytify-LE#readme" target="_blank">Documentation</a></p>
+  </footer>
+
+  <script>
+    function switchTab(tabName) {{
+      // Hide all tabs
+      document.querySelectorAll('.tab-content').forEach(tab => {{
+        tab.classList.remove('active');
+      }});
+      document.querySelectorAll('.tab-button').forEach(btn => {{
+        btn.classList.remove('active');
+      }});
+
+      // Show selected tab
+      document.getElementById('tab-' + tabName).classList.add('active');
+      event.target.classList.add('active');
+    }}
+
+    // Auto-refresh logs every 3 seconds
+    function refreshLogs() {{
+      fetch('/logs')
+        .then(response => response.json())
+        .then(data => {{
+          const logDisplay = document.getElementById('log-display');
+          if (data.logs) {{
+            logDisplay.textContent = data.logs;
+            logDisplay.scrollTop = logDisplay.scrollHeight;
+          }}
+        }})
+        .catch(err => console.error('Failed to fetch logs:', err));
+    }}
+
+    // Refresh status every 2 seconds
+    function refreshStatus() {{
+      fetch('/status')
+        .then(response => response.json())
+        .then(data => {{
+          // Update status in UI (could enhance this later)
+          console.log('Status:', data);
+        }})
+        .catch(err => console.error('Failed to fetch status:', err));
+    }}
+
+    // Initial load and set intervals
+    refreshLogs();
+    setInterval(refreshLogs, 3000);
+    setInterval(refreshStatus, 2000);
+  </script>
 </body>
 </html>
         """.strip()

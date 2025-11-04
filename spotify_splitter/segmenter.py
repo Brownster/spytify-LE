@@ -15,6 +15,7 @@ import requests
 from .mpris import TrackInfo
 from .track_boundary_detector import TrackBoundaryDetector, BoundaryResult, TrackMarker as EnhancedTrackMarker
 from .error_recovery import ErrorRecoveryManager, RecoveryAction, ErrorSeverity
+from .lastfm_api import get_lastfm_client
 
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,8 @@ class SegmentManager:
         enable_error_recovery: bool = True,
         max_processing_retries: int = 3,
         enable_graceful_degradation: bool = True,
+        lastfm_api_key: Optional[str] = None,
+        allow_overwrite: bool = False,
     ) -> None:
         self.samplerate = samplerate
         self.output_dir = output_dir
@@ -76,6 +79,8 @@ class SegmentManager:
         self.ui_callback = ui_callback
         self.playlist_path = Path(playlist_path) if playlist_path else None
         self.bundle_playlist = bundle_playlist
+        self.lastfm_api_key = lastfm_api_key
+        self.allow_overwrite = allow_overwrite
         if self.bundle_playlist and not self.playlist_path:
             raise ValueError("bundle_playlist requires playlist_path")
         self.bundle_album_name = (
@@ -569,17 +574,41 @@ class SegmentManager:
 
         path = self._get_track_path(track_info)
         path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         file_already_exists = path.exists()
-        if file_already_exists:
+        if file_already_exists and not self.allow_overwrite:
             logger.info("File %s already exists, skipping export but adding to playlist", path)
         else:
+            if file_already_exists:
+                logger.info("File %s already exists, overwriting...", path)
             audio_segment.export(path, format=self.format, bitrate="320k")
 
             try:
                 tags = EasyID3(path)
             except Exception:
                 tags = EasyID3()
+
+            # Fetch year and genre from LastFM if not present
+            year = track_info.year
+            genre = track_info.genre
+
+            if not year or not genre:
+                try:
+                    lastfm = get_lastfm_client(api_key=self.lastfm_api_key)
+                    lastfm_metadata = lastfm.get_track_metadata(
+                        track_info.artist,
+                        track_info.title,
+                        track_info.album
+                    )
+                    if not year and lastfm_metadata.year:
+                        year = lastfm_metadata.year
+                    if not genre and lastfm_metadata.genres:
+                        # Join multiple genres with semicolon
+                        genre = "; ".join(lastfm_metadata.genres)
+                    logger.debug("LastFM metadata for %s - %s: year=%s, genres=%s",
+                               track_info.artist, track_info.title, year, genre)
+                except Exception as e:
+                    logger.warning("Failed to fetch LastFM metadata: %s", e)
 
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
@@ -591,6 +620,10 @@ class SegmentManager:
                 tags["albumartist"] = track_info.artist
             if track_info.track_number:
                 tags["tracknumber"] = str(track_info.track_number)
+            if year:
+                tags["date"] = str(year)
+            if genre:
+                tags["genre"] = genre
             tags.save(path)
 
             try:
@@ -1000,11 +1033,14 @@ class SegmentManager:
         try:
             path = self._get_track_path(track_info)
             path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Skip if file already exists
-            if path.exists():
+
+            # Skip if file already exists and overwrite is not allowed
+            if path.exists() and not self.allow_overwrite:
                 logger.info("File %s already exists, skipping minimal export", path)
                 return True
+
+            if path.exists():
+                logger.info("File %s already exists, overwriting with minimal export...", path)
             
             # Export with basic settings, no album art
             segment.export(path, format=self.format, bitrate="192k")  # Lower bitrate for degraded mode

@@ -1,5 +1,6 @@
 import threading
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 import typer
@@ -54,20 +55,30 @@ def main_callback(
         help="Path to configuration file (defaults to ~/.config/spotify_splitter/config.json)",
     ),
 ):
-    """Record Spotify playback and split into tracks.
-    
-    Supports both regular Spotify client and headless spotifyd usage.
-    Use --spotifyd-mode for optimized headless operation.
+    """Record Spotify desktop playback and split into tracks.
+
+    Monitors Linux Spotify desktop client via MPRIS and records audio
+    via PulseAudio/PipeWire. Automatically tags with LastFM metadata.
 
     For a full list of recording options, run:
     spotify-splitter record --help
     """
     level = logging.DEBUG if verbose else logging.INFO
-    logging.basicConfig(
-        level=level,
-        handlers=[RichHandler(rich_tracebacks=True)],
-        force=True,
-    )
+    # Use a simple format when running under service to avoid duplicate prefixes
+    if os.environ.get("RICH_FORCE_TERMINAL") == "0":
+        # Running as subprocess - use simple format
+        logging.basicConfig(
+            level=level,
+            format="%(levelname)s: %(message)s",
+            force=True,
+        )
+    else:
+        # Running interactively - use RichHandler
+        logging.basicConfig(
+            level=level,
+            handlers=[RichHandler(rich_tracebacks=True)],
+            force=True,
+        )
     config = load_user_config(config_path)
     resolved_output = Path(output).expanduser() if output else Path(config["output"]).expanduser()
     resolved_format = format or config.get("format", "mp3")
@@ -91,7 +102,7 @@ def record(
     player: str = typer.Option(
         "spotify",
         "--player",
-        help="The MPRIS player name to connect to (e.g., 'spotify' or 'spotifyd').",
+        help="The MPRIS player name (usually 'spotify' for Spotify desktop).",
     ),
     queue_size: int = typer.Option(
         None,
@@ -107,11 +118,6 @@ def record(
         None,
         "--latency",
         help="Desired latency for the audio stream in seconds. If not specified, uses profile default.",
-    ),
-    spotifyd_mode: bool = typer.Option(
-        False,
-        "--spotifyd-mode",
-        help="Optimize for spotifyd usage (uses spotifyd player, headless profile).",
     ),
     profile: str = typer.Option(
         "auto",
@@ -175,7 +181,6 @@ def record(
     queue_size = resolve_param("queue_size", queue_size)
     blocksize = resolve_param("blocksize", blocksize)
     latency = resolve_param("latency", latency)
-    spotifyd_mode = resolve_param("spotifyd_mode", spotifyd_mode)
     profile = resolve_param("profile", profile)
     enable_adaptive = resolve_param("enable_adaptive", enable_adaptive)
     enable_monitoring = resolve_param("enable_monitoring", enable_monitoring)
@@ -205,15 +210,11 @@ def record(
     # Detect system capabilities and select configuration profile
     try:
         # Parse profile type
-        if spotifyd_mode:
-            profile_type = ProfileType.HEADLESS
-            logging.info("Spotifyd mode enabled - using headless profile")
-        else:
-            try:
-                profile_type = ProfileType(profile.lower())
-            except ValueError:
-                logging.warning(f"Unknown profile '{profile}', using auto selection")
-                profile_type = ProfileType.AUTO
+        try:
+            profile_type = ProfileType(profile.lower())
+        except ValueError:
+            logging.warning(f"Unknown profile '{profile}', using auto selection")
+            profile_type = ProfileType.AUTO
         
         # Get configuration profile
         config_profile = ProfileManager.get_profile(profile_type)
@@ -466,6 +467,9 @@ def record(
         
         live.update(create_enhanced_ui())
 
+    # Get allow_overwrite from config
+    allow_overwrite = config.get("allow_overwrite", False)
+
     manager = SegmentManager(
         samplerate=info.samplerate,
         output_dir=Path(out_dir) if out_dir else OUTPUT_DIR,
@@ -479,6 +483,7 @@ def record(
         enable_error_recovery=True,
         max_processing_retries=3,
         enable_graceful_degradation=True,
+        allow_overwrite=allow_overwrite,
     )
     
     # Flush any cached data from previous runs
@@ -500,10 +505,7 @@ def record(
             break
     
     # Update UI state for startup
-    if spotifyd_mode:
-        ui_state["recording_status"] = "Waiting for spotifyd connection..."
-    else:
-        ui_state["recording_status"] = "Waiting for first track..."
+    ui_state["recording_status"] = "Waiting for first track..."
     
     # Reset UI state for clean startup
     ui_state["current_track"] = None
@@ -588,9 +590,6 @@ def record(
                     ui_state["recording_status"] = "Playback paused"
                 live.update(create_enhanced_ui())
 
-            # Adjust player name for spotifyd mode
-            effective_player = "spotifyd" if spotifyd_mode else player
-            
             with audio_stream:
                 processing_thread.start()
                 
@@ -620,12 +619,12 @@ def record(
                 # Start MPRIS tracking in a separate thread to avoid blocking
                 def mpris_wrapper():
                     try:
-                        logging.info(f"Starting MPRIS tracking for player: {effective_player}")
+                        logging.info(f"Starting MPRIS tracking for player: {player}")
                         track_events(
                             on_change,
                             on_status,
                             dump_metadata=dump_metadata,
-                            player_name=effective_player,
+                            player_name=player,
                         )
                     except Exception as e:
                         logging.error(f"MPRIS tracking failed: {e}")
@@ -798,7 +797,6 @@ def profiles():
     console.print("  spotify-splitter record --profile headless")
     console.print("  spotify-splitter record --profile desktop --adaptive")
     console.print("  spotify-splitter record --profile high_performance --debug-mode")
-    console.print("  spotify-splitter record --spotifyd-mode  # Uses headless profile")
 
 
 @app.command()
@@ -831,11 +829,6 @@ def configure(
         None,
         "--profile",
         help="Default configuration profile to apply",
-    ),
-    spotifyd_mode: Optional[bool] = typer.Option(
-        None,
-        "--spotifyd-mode/--no-spotifyd-mode",
-        help="Toggle spotifyd headless optimisations by default",
     ),
     enable_adaptive: Optional[bool] = typer.Option(
         None,
@@ -954,11 +947,6 @@ def configure(
     )
     updates["profile"] = profile_value or existing.get("profile") or DEFAULT_CONFIG["profile"]
 
-    updates["spotifyd_mode"] = prompt_bool(
-        "spotifyd_mode",
-        spotifyd_mode,
-        "Enable spotifyd mode by default?",
-    )
     updates["enable_adaptive"] = prompt_bool(
         "enable_adaptive",
         enable_adaptive,
@@ -1014,13 +1002,13 @@ def configure(
         "format",
         "player",
         "profile",
-        "spotifyd_mode",
         "enable_adaptive",
         "enable_monitoring",
         "enable_metrics",
         "debug_mode",
         "playlist",
         "bundle_playlist",
+        "lastfm_api_key",
     ]
     for key in summary_keys:
         typer.echo(f"  {key}: {merged.get(key)}")

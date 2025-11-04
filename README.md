@@ -1,30 +1,37 @@
-# Spotify Splitter
+# Spoti2 - Linux Spotify Desktop Recorder
 
-This project records Spotify playback on Linux and saves each track as an individual audio file with metadata.
+Record Spotify desktop playback on Linux and save each track as an individual audio file with rich metadata from LastFM.
 
 <img width="1863" height="217" alt="image" src="https://github.com/user-attachments/assets/d9344323-0293-4681-9761-9abfb30f2c28" />
+
+## Features
+
+- 🎵 **Automatic Track Splitting** - Monitors Spotify desktop via MPRIS and splits tracks automatically
+- 🎨 **Rich Metadata** - Fetches year and genre from LastFM, plus album art from Spotify
+- 🌐 **Modern Web UI** - Beautiful 3-tab interface for easy control and monitoring with minimal, clean logs
+- ⚡ **High Quality** - Records lossless via PulseAudio/PipeWire monitor sources
+- 📝 **Playlist Support** - Generate M3U playlists with optional bundling
+- 🚫 **Ad Filtering** - Automatically skips advertisements
+- ⏯️ **Smart Controls** - Start, stop, pause, and resume recording from web UI
+- 🔄 **Auto-Recovery** - Robust error handling and automatic restarts
+- 🔁 **Overwrite Control** - Optional re-recording of existing tracks
 
 ## Prerequisites
 
 - Linux with PulseAudio or PipeWire
-- A running Spotify client
+- Spotify desktop client (tested with [Flatpak version](https://flathub.org/apps/com.spotify.Client))
 - Python 3.10– <4.0
-- `python3-pyaudio` and `ffmpeg` (system packages)
+- System packages: `python3-pyaudio` and `ffmpeg`
+- **LastFM API key** (free) - [Get one here](https://www.last.fm/api/account/create)
 
-**For source installation only:**
+**For source installation:**
 - [Poetry](https://python-poetry.org/) installed
-
-ffmpeg is required for converting audio during export and when running tests.
-
-Tested with flatpack official app
-
-https://flathub.org/apps/com.spotify.Client
 
 ## Installation
 
 ### Option 1: Install from Release (Recommended)
 
-Download the latest `.whl` file from [GitHub Releases](https://github.com/Brownster/spoti2/releases) and install:
+Download the latest `.whl` file from [GitHub Releases](https://github.com/Brownster/spytify-LE/releases):
 
 ```bash
 # Install system dependencies
@@ -40,179 +47,138 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-After installation, you can run `spotify-splitter` from anywhere without `poetry run`.
-
 ### Option 2: Install from Source
 
 ```bash
-git clone https://github.com/Brownster/spoti2.git
-cd spoti2
+git clone https://github.com/Brownster/spytify-LE.git
+cd spytify-LE
 sudo apt install python3-pyaudio ffmpeg
 poetry config virtualenvs.options.system-site-packages true
 poetry install
 ```
 
-### With spotifyd (Headless)
+## Quick Start
 
-For headless operation, you can use [spotifyd](https://github.com/Spotifyd/spotifyd):
+### Web UI (Recommended)
 
-1. **Install spotifyd** (check your distribution's package manager)
-2. **Configure spotifyd** at `~/.config/spotifyd/spotifyd.conf`:
-   ```
-   [global]
-   username = "your_username"
-   password = "your_password"
-   device_name = "YourDevice"
-   backend = "pulseaudio"
-   volume_normalisation = true
-   bitrate = 320
-   use_mpris = true
-   ```
-3. **Start spotifyd**: `systemctl --user start spotifyd`
-4. **Run spotify-splitter**: 
-   - With wheel: `spotify-splitter --output ~/Music record --spotifyd-mode`
-   - With source: `poetry run spotify-splitter --output ~/Music record --spotifyd-mode`
-
-### Enabling MPRIS on spotifyd
-
-Spotify Splitter receives track metadata via the [MPRIS](https://specifications.freedesktop.org/mpris-spec/latest/) D-Bus interface. When running `spotifyd` on headless systems, no session bus may be available. You can either launch `spotifyd` with its own bus using `dbus-launch` or configure it to use the system bus.
-
-**Option 1 – dbus-launch**
-
-Create a wrapper script and start it with `dbus-launch`:
+Start the web service for the easiest experience:
 
 ```bash
-#!/bin/bash
-echo "$DBUS_SESSION_BUS_ADDRESS" > /tmp/spotifyd_bus
-echo "To use spotifyd's session bus, run 'export DBUS_SESSION_BUS_ADDRESS=$(cat /tmp/spotifyd_bus)'"
-spotifyd --no-daemon --use-mpris
+# Start the web interface (runs on http://localhost:8730)
+python -m spoti2_service
+
+# Or customize host/port
+python -m spoti2_service --host 0.0.0.0 --port 8080
 ```
 
-Run `dbus-launch ./spotify_wrapper.sh` and follow the instructions in the output.
+Then open http://localhost:8730 in your browser. You'll see:
 
-**Option 2 – system bus**
+- **Record Tab** - Start/Stop/Pause recording, live status, and recording log
+- **Settings Tab** - Configure output directory, format, and LastFM API key
+- **Advanced Tab** - Performance settings and player configuration
 
-Set `dbus_type = "system"` (or pass `--dbus-type system`) and allow your user to own the MPRIS name by creating `/usr/share/dbus-1/system.d/spotifyd.conf`:
+### CLI Usage
 
-```xml
-<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN" "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
-<busconfig>
-  <policy user="youruser">
-    <allow own_prefix="rs.spotifyd"/>
-    <allow own_prefix="org.mpris.MediaPlayer2.spotifyd"/>
-  </policy>
-  <policy user="youruser">
-    <allow send_destination_prefix="rs.spotifyd"/>
-    <allow send_destination_prefix="org.mpris.MediaPlayer2.spotifyd"/>
-  </policy>
-</busconfig>
-```
-
-Reload D-Bus with `systemctl reload dbus` after creating the file. Ensure you are using a `spotifyd` build that includes the `dbus_mpris` feature (the `-full` binary or a custom build with `--features "dbus_mpris"`).
-
-## Features
-
-- Listens for track changes via MPRIS
-- Captures audio through PipeWire/PulseAudio monitor sources
-- Automatically detects sample rate and channel count
-- Pauses recording when playback is paused
-- Writes MP3 (or other formats) with ID3 tags and cover art
-- Provides a Typer-based CLI with logging via Rich
-- Automatically skips advertisements using track metadata
-- Avoids re-recording tracks that already exist on disk
-- Works with both Spotify and spotifyd via the configurable `--player` option
-- Optionally creates an M3U playlist of recorded tracks using `--playlist <file>`
-- Bundle playlist tracks into a single album using `--bundle-playlist`
-  (tracks are renumbered sequentially)
-
-## Usage
-
-### Quick Setup (Recommended)
 ```bash
-# Create or update saved defaults (prompts for the essentials)
+# Interactive setup wizard (recommended for first-time use)
 spotify-splitter configure
 
-# Or, when running from source
-poetry run spotify-splitter configure
-```
-
-The wizard stores your preferences (output folder, format, player, etc.) in
-`~/.config/spotify_splitter/config.json`. After that, a plain
-`spotify-splitter record` automatically uses those defaults—no extra flags
-needed. Re-run the configure command any time you want to make changes, or pass
-`--non-interactive` with options to script the setup. Use `--config` to point at
-an alternate configuration file if you maintain multiple profiles.
-
-### With Wheel Installation
-```bash
-# Basic usage
+# Basic recording
 spotify-splitter record
 
 # Custom output directory and format
-spotify-splitter --output ~/Music/Rips --format flac record
+spotify-splitter --output ~/Music/Spotify --format flac record
 
-# Headless mode with spotifyd
-spotify-splitter record --spotifyd-mode
-
-# Save a playlist of recorded tracks
+# Create playlist of recorded tracks
 spotify-splitter record --playlist mysession.m3u
-# Existing playlist files will be appended to rather than overwritten
-# Bundle playlist tracks under a single album (tracks renumbered from 1)
+
+# Bundle playlist tracks as single album
 spotify-splitter record --playlist mysession.m3u --bundle-playlist
 ```
 
-### With Source Installation
+By default, tracks are saved to `~/Music/Spotify Splitter/<Artist>/<Album>/<Track>.mp3` with full ID3 tags including:
+- Artist, Title, Album, Track Number
+- Album Art (embedded JPEG)
+- **Year** (from LastFM)
+- **Genre** (from LastFM)
+
+## Configuration
+
+### LastFM API Key Setup
+
+1. **Get your API key** at https://www.last.fm/api/account/create
+2. **Add it to the config**:
+   - Via Web UI: Settings tab → LastFM API Key field
+   - Via CLI: Edit `~/.config/spotify_splitter/config.json`
+   - Or set in code: `spotify_splitter/lastfm_api.py` line 18
+
+### Configuration Profiles
+
+Spoti2 includes optimized profiles for different use cases:
+
+- **auto** - Automatically detects optimal settings
+- **desktop** - Balanced for desktop usage (default)
+- **headless** - Optimized for servers/headless systems
+- **high_performance** - Low-latency for powerful systems
+
 ```bash
-# Basic usage
-poetry run spotify-splitter record
-
-# Custom output directory and format
-poetry run spotify-splitter --output ~/Music/Rips --format flac record
-
-# Headless mode with spotifyd
-poetry run spotify-splitter record --spotifyd-mode
-
-# Save a playlist of recorded tracks
-poetry run spotify-splitter record --playlist mysession.m3u
-# Existing playlist files will be appended to rather than overwritten
-# Bundle playlist tracks under a single album (tracks renumbered from 1)
-poetry run spotify-splitter record --playlist mysession.m3u --bundle-playlist
+spotify-splitter record --profile headless
 ```
 
-By default, tracks are saved under `~/Music/<Artist>/<Album>/<Artist> - <Title>.mp3`.
-
-Use `--help` to view available options.
-
-If you notice occasional "input overflow" warnings in the logs, try
-increasing the audio buffer or adjusting the stream latency:
+### Advanced Options
 
 ```bash
-# With wheel installation
+# Buffer tuning for lower-end systems
 spotify-splitter record --queue-size 50 --latency 0.1
 
-# With source installation
-poetry run spotify-splitter record --queue-size 50 --latency 0.1
+# Disable performance monitoring
+spotify-splitter record --no-adaptive --no-monitoring
+
+# Debug mode with performance dashboard
+spotify-splitter record --debug-mode
 ```
 
-## Service Mode & Web UI
+## Web UI Features
 
-Want Spotify Splitter to run hands-off as a background service? A companion
-wrapper is bundled in this repository:
+The modern web interface provides:
+
+### Record Tab
+- **Live Status** - See recording state with clear indicators showing current track
+- **Control Buttons** - Start, Stop, Pause, Resume recording
+- **Recording Log** - Clean, minimal logs showing only essential events:
+  - Tracks saved with file paths
+  - Critical errors
+  - Duplicate file detections
+- **Verbose Toggle** - Optional checkbox to show detailed logs for troubleshooting:
+  - Track changes
+  - MPRIS events
+  - Warnings and buffer status
+
+### Settings Tab
+- **Output directory configuration** - Where tracks are saved
+- **Audio format selection** - MP3, FLAC, WAV, OGG
+- **Overwrite existing files** - Toggle to re-record tracks that already exist (useful for fixing incomplete recordings)
+- **LastFM API key management** - Required for year and genre metadata
+- **Playlist generation options** - Create M3U playlists with optional bundling
+
+### Advanced Tab
+- **Performance profile selection** - Auto, desktop, headless, high_performance
+- **Buffer management settings** - Adaptive buffers, monitoring, metrics
+- **Player name configuration** - MPRIS player selection
+- **Debug options** - Advanced diagnostics
+
+## Service Mode & Systemd Integration
+
+Run Spoti2 as a background service with automatic restarts:
 
 ```bash
-# Launch the service with the retro-styled web dashboard (default port 8730)
+# Start service manually
 python -m spoti2_service
-
-# Customise host/port or config path as needed
-python -m spoti2_service --host 127.0.0.1 --port 9090 --config ~/.config/spotify_splitter/service.json
 ```
 
-Highlights:
-- Persistent supervisor that relaunches the recorder if Spotify is idle (no more crashes when playback isn’t active yet).
-- Metrics/monitoring disabled by default for lower resource usage; toggle them on only when needed.
-- Lightweight “WinMX vibe” control deck (`http://HOST:PORT`) to adjust the saved config, update playlist targets, and trigger restarts.
-
 ### Example systemd Unit
+
+Create `~/.config/systemd/user/spoti2.service`:
 
 ```ini
 [Unit]
@@ -220,8 +186,9 @@ Description=Spoti2 Recording Service
 After=network.target
 
 [Service]
-WorkingDirectory=/home/youruser/Documents/MyApps/scripts/spoti2
-ExecStart=/usr/bin/python -m spoti2_service --config /home/youruser/.config/spotify_splitter/config.json
+Type=simple
+WorkingDirectory=/path/to/spoti2
+ExecStart=/usr/bin/python -m spoti2_service
 Restart=on-failure
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
@@ -230,114 +197,150 @@ Environment=PYTHONUNBUFFERED=1
 WantedBy=default.target
 ```
 
-Enable and start with:
+Enable and start:
 
 ```bash
 systemctl --user enable spoti2.service
 systemctl --user start spoti2.service
+systemctl --user status spoti2.service
 ```
 
-## ID3 Tagging API Integration
+## Library Management Integration
 
-Spotify Splitter includes integration with an external ID3 tagging API service that automatically processes recorded tracks to enhance metadata tags with additional information like genre, year, and other missing tags.
+### Lidarr Integration
 
-### Automatic Processing on Shutdown
+Point [Lidarr](https://lidarr.audio/)'s "Manual Import" folder to your output directory for automatic organization:
 
-When recording ends, Spotify Splitter automatically calls the tagging API service to process your recorded tracks. The API runs at `http://localhost:5000` by default and provides two endpoints:
+1. Configure Lidarr to monitor `~/Music/Spotify Splitter`
+2. Lidarr will automatically:
+   - Match tracks to its database
+   - Fetch additional metadata
+   - Move files to organized library
+   - Handle duplicates
 
-- `/process_directory` - Processes all MP3 files in a directory
-- `/process_playlist` - Processes tracks listed in an M3U playlist file
+### Music Players
 
-### Setting Up the ID3 Tagger API
+Recorded tracks work perfectly with:
+- **Strawberry** - Advanced music player with excellent metadata support
+- **Rhythmbox** - GNOME's default music player
+- **Clementine** - Feature-rich player with smart playlists
+- **VLC** - Universal media player
 
-To use this feature, install and run the companion ID3 tagging service:
-
-1. **Install the ID3 Tagger API**: [https://github.com/Brownster/id3-tagger](https://github.com/Brownster/id3-tagger)
-2. **Start the service** on `http://localhost:5000`
-3. **Record tracks** with Spotify Splitter - the API will be called automatically on shutdown
-
-The tagging service enhances your tracks with:
-- Genre information
-- Release year
-- Additional metadata from music databases
-- Improved tag consistency
-
-If the API service is not running, Spotify Splitter will continue to work normally and simply log a warning about the unavailable tagging service.
-
-
-## Automated Library Management with Lidarr
-
-You can also let [Lidarr](https://lidarr.audio/) handle tagging and
-organization. Point Lidarr's "Manual Import" (Drone Factory) folder to the same
-directory used by `spotify-splitter` and it will automatically match tracks and
-move them into your music library.
-
-For integration with Lidarr, configure Lidarr to monitor the same directory used by `spotify-splitter`. When new files appear, Lidarr will import them, fetch metadata, and move them into your organized library.
-
-
-# Not using any post processing adding music folder to Strawberry
 <img width="400" height="764" alt="image" src="https://github.com/user-attachments/assets/e2cebd73-57da-4d80-a896-90ffa5c6c804" />
-
-
 
 ## Troubleshooting
 
-If you see an error like `ValueError: No input device matching` when starting a
-recording, the monitor name reported by `pactl` might not match the name used by
-PortAudio. The application now attempts a best-effort lookup but you may need to
-ensure the correct audio backend and monitor sources are available.
-If saved tracks sound distorted or play at the wrong speed, the capture
-device's sample rate likely doesn't match Spotify's output. Verify that the
-selected monitor source uses the same sample rate reported by `pactl`.
+### No Audio Device Found
 
+If you see `ValueError: No input device matching`:
 
-## Technical Overview
+```bash
+# List available monitors
+pactl list sources | grep -E "Name:|Description:"
 
-### Architecture and Design
+# Find your Spotify monitor (usually contains "spotify" or "Monitor")
+# Update player name if needed
+spotify-splitter record --player spotify
+```
 
-Spotify Splitter is designed to solve the challenge of automated music archival from streaming services. The application leverages several key technologies to achieve reliable, high-quality audio capture and track segmentation on Linux systems.
+### Audio Quality Issues
 
-### Core Components
+If tracks sound distorted or have wrong speed:
 
-**MPRIS Integration**
-The application utilizes the Media Player Remote Interfacing Specification (MPRIS) through D-Bus to monitor track metadata from Spotify clients. This standardized interface provides real-time access to track information including artist, title, album, and artwork URLs, enabling precise track boundaries and metadata tagging.
+1. **Check sample rate**: Ensure monitor source matches Spotify output
+2. **Verify audio backend**: PulseAudio or PipeWire should be running
+3. **Try different latency**: `spotify-splitter record --latency 0.05`
 
-**Audio Capture System**
-Audio capture is implemented using PulseAudio/PipeWire monitor sources, which provide a lossless digital copy of the audio stream. The system employs the sounddevice library with PortAudio backend for consistent cross-platform audio handling, with automatic sample rate detection and buffer management to prevent audio dropouts.
+### Buffer Overflow Warnings
 
-**Signal Processing Pipeline**
-The audio processing pipeline handles format conversion from float32 to int16, implements configurable buffering strategies, and provides real-time audio level monitoring. The system includes overflow protection and dynamic latency adjustment to maintain audio quality under varying system loads.
+If you see "input overflow" warnings:
 
-### Technical Challenges and Solutions
+```bash
+# Increase buffer size
+spotify-splitter record --queue-size 50 --latency 0.1
 
-**Data Type Compatibility**
-Early development revealed audio format mismatches between capture and export libraries. The solution involved implementing proper format conversion with scaling and type casting to ensure compatibility between sounddevice's float32 output and pydub's integer-based processing.
+# Or use headless profile
+spotify-splitter record --profile headless
+```
 
-**Track Boundary Detection**
-Accurate track splitting required developing a timestamp-based segmentation system that monitors MPRIS metadata changes while maintaining audio continuity. The system includes validation logic to ensure complete track capture and duration verification against expected track lengths.
+### LastFM Metadata Not Working
 
-**System Integration**
-The application handles the complexity of Linux audio systems by implementing automatic device detection for both PulseAudio and PipeWire environments. This includes dynamic monitor source discovery and sample rate adaptation for different audio configurations.
+1. Verify API key is set correctly
+2. Check network connection
+3. View logs for API errors: `~/.cache/spotify_splitter/service/recorder.log`
 
-### Production Considerations
+## Architecture Overview
 
-**Reliability Features**
-- Incomplete track detection prevents partial file saves
-- Advertisement filtering using track metadata analysis
-- Duplicate detection to avoid re-recording existing tracks
-- Automatic cache management for long-running sessions
+### Core Technology Stack
 
-**Performance Optimizations**
-- Configurable buffer sizes for different system capabilities
-- Threaded audio processing to prevent blocking
-- Memory-efficient streaming for extended recording sessions
-- Adaptive latency control for various hardware configurations
+- **MPRIS D-Bus** - Real-time track metadata from Spotify desktop
+- **PulseAudio/PipeWire** - Lossless digital audio capture via monitor sources
+- **sounddevice + PortAudio** - Cross-platform audio handling with automatic sample rate detection
+- **LastFM API** - Rich metadata enrichment (year, genre)
+- **mutagen** - ID3v2.4 tag writing with embedded album art
+- **Rich + Typer** - Beautiful CLI interface
+- **HTTP Server** - Modern web UI with live updates
 
-**Headless Operation**
-Integration with spotifyd enables automated recording for server deployments, with optimized buffer management and error recovery suitable for unattended operation.
+### Audio Processing Pipeline
 
-### Technical Stack
+```
+Spotify Desktop Audio Output
+           ↓
+PulseAudio/PipeWire Monitor
+           ↓
+sounddevice (PortAudio)
+           ↓
+Adaptive Buffer Management
+           ↓
+Track Boundary Detection (MPRIS)
+           ↓
+Format Conversion (float32 → int16)
+           ↓
+Audio Segmentation per Track
+           ↓
+ID3 Tagging (Mutagen)
+  ├─ Basic: Artist, Title, Album, Track #
+  ├─ Album Art (from Spotify)
+  └─ LastFM: Year, Genre
+           ↓
+Export (MP3/FLAC/WAV/OGG)
+```
 
-Built on modern Python libraries including sounddevice for audio capture, pydbus for D-Bus communication, mutagen for metadata handling, and rich for user interface components. The application follows modern software engineering practices with comprehensive testing, type hints, and modular architecture.
+### Key Features
 
-This tool represents a practical solution to digital music archival challenges, combining robust audio processing with reliable metadata handling to create a professional-grade recording system for personal use.
+**Reliability**
+- Incomplete track detection
+- Advertisement filtering
+- Duplicate detection
+- Automatic error recovery
+- Graceful degradation
+
+**Performance**
+- Adaptive buffer sizing
+- Non-blocking threaded processing
+- Memory-efficient streaming
+- Dynamic latency adjustment
+- Real-time performance monitoring
+
+**Production Ready**
+- Comprehensive test suite
+- Type-hinted codebase
+- Modular architecture
+- Extensive logging
+- Web-based monitoring
+
+## Contributing
+
+Contributions welcome! This project focuses on:
+- Linux Spotify desktop client support
+- High-quality audio capture
+- Rich metadata via LastFM
+- Clean, maintainable code
+
+## License
+
+MIT License - See LICENSE file for details
+
+## Credits
+
+Inspired by the excellent [spy-spotify](https://github.com/jwallet/spy-spotify) Windows application.

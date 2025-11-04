@@ -42,10 +42,10 @@ def test_process_segments(monkeypatch, tmp_path):
     frames2 = np.ones((100, 2), dtype="float32")
     audio_q.put(frames1)
     manager._ingest_audio()
-    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0, 0)))
+    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0, 0, None, None)))
     audio_q.put(frames2)
     manager._ingest_audio()
-    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T2", "Al", None, "spotify:track:2", 2, 0, 0)))
+    manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T2", "Al", None, "spotify:track:2", 2, 0, 0, None, None)))
 
     manager.process_segments()
     assert exported == ["T1"]
@@ -54,7 +54,7 @@ def test_process_segments(monkeypatch, tmp_path):
 def test_is_song_new_format(monkeypatch):
     segmenter = load_segmenter(monkeypatch)
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
-    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1, 0, 0)
+    song = TrackInfo("Artist", "Title", "Album", None, "/com/spotify/track/123", 1, 0, 0, None, None)
     assert segmenter.is_song(song)
 
 
@@ -64,7 +64,7 @@ def test_float_export_not_distorted(monkeypatch, tmp_path):
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
-    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1, 0, 0)
+    track = TrackInfo("Artist", "Tone", "Album", None, "spotify:track:1", 1, 0, 0, None, None)
 
     t = np.linspace(0, 1, manager.samplerate, endpoint=False)
     sine = 0.5 * np.sin(2 * np.pi * 440 * t)
@@ -95,7 +95,7 @@ def test_skip_existing_file(monkeypatch, tmp_path):
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
 
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0, None, None)
 
     existing = manager._get_track_path(track)
     existing.parent.mkdir(parents=True, exist_ok=True)
@@ -116,7 +116,7 @@ def test_playlist_creation(monkeypatch, tmp_path):
 
     playlist = tmp_path / "session.m3u"
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav", playlist_path=playlist)
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0, None, None)
 
     monkeypatch.setattr(AudioSegment, "export", lambda self, path, format=None, bitrate=None: Path(path).touch())
 
@@ -138,7 +138,7 @@ def test_playlist_append(monkeypatch, tmp_path):
     playlist.write_text("#EXTM3U\nexisting.mp3\n")
 
     manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav", playlist_path=playlist)
-    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0)
+    track = TrackInfo("Artist", "Title", "Album", None, "spotify:track:1", 1, 0, 0, None, None)
 
     monkeypatch.setattr(AudioSegment, "export", lambda self, path, format=None, bitrate=None: Path(path).touch())
 
@@ -165,7 +165,7 @@ def test_bundle_playlist_tags(monkeypatch, tmp_path):
         playlist_path=playlist,
         bundle_playlist=True,
     )
-    track = TrackInfo("Artist", "Title", "Orig", None, "spotify:track:1", 1, 0, 0)
+    track = TrackInfo("Artist", "Title", "Orig", None, "spotify:track:1", 1, 0, 0, None, None)
 
     captured = {}
 
@@ -233,8 +233,8 @@ def test_bundle_playlist_track_numbers(monkeypatch, tmp_path):
         lambda self, path, format=None, bitrate=None: Path(path).touch(),
     )
 
-    track1 = TrackInfo("Artist1", "T1", "Orig1", None, "spotify:track:1", 10, 0, 0)
-    track2 = TrackInfo("Artist2", "T2", "Orig2", None, "spotify:track:2", 20, 0, 0)
+    track1 = TrackInfo("Artist1", "T1", "Orig1", None, "spotify:track:1", 10, 0, 0, None, None)
+    track2 = TrackInfo("Artist2", "T2", "Orig2", None, "spotify:track:2", 20, 0, 0, None, None)
 
     manager._export(np.ones((2, 2), dtype="float32"), track1)
     manager._export(np.ones((2, 2), dtype="float32"), track2)

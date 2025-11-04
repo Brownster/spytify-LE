@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Record Spotify playback and split tracks with metadata"
 authors = ["Marc Brown <your-email@example.com>"]
 readme = "README.md"
-repository = "https://github.com/Brownster/spoti2"
+repository = "https://github.com/Brownster/spytify-LE"
 keywords = ["spotify", "audio", "recording", "music", "splitter"]
 classifiers = [
     "Development Status :: 4 - Beta",

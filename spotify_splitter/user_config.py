@@ -12,7 +12,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "format": "mp3",
     "player": "spotify",
     "profile": "auto",
-    "spotifyd_mode": False,
     "enable_adaptive": True,
     "enable_monitoring": True,
     "enable_metrics": True,
@@ -24,6 +23,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "latency": None,
     "max_buffer_size": 1000,
     "min_buffer_size": 50,
+    "lastfm_api_key": None,  # LastFM API key for metadata fetching
+    "allow_overwrite": False,  # Allow overwriting existing track files
 }
 
 
