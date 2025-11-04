@@ -2,7 +2,8 @@
 
 Record Spotify desktop playback on Linux and save each track as an individual audio file with rich metadata from LastFM.
 
-<img width="1623" height="870" alt="image" src="https://github.com/user-attachments/assets/601247fb-de25-4d6c-99d5-a343452b0533" />
+<img width="1702" height="847" alt="image" src="https://github.com/user-attachments/assets/04a508fa-4e8f-4c8c-bab1-ce06e8369a78" />
+
 
 ## Features
 
