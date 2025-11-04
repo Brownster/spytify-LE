@@ -327,6 +327,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.app.supervisor.status())
         elif self.path == "/logs":
             self._serve_logs()
+        elif self.path == "/logo.png":
+            self._serve_logo()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -458,6 +460,29 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._send_json({"logs": logs})
         except Exception as e:
             self._send_json({"logs": f"Error reading logs: {e}"})
+
+    def _serve_logo(self) -> None:
+        """Serve the logo.png file."""
+        try:
+            # Get the logo path relative to this file
+            logo_path = Path(__file__).parent.parent / "logo.png"
+
+            if not logo_path.exists():
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+
+            with open(logo_path, "rb") as f:
+                logo_data = f.read()
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "image/png")
+            self.send_header("Content-Length", str(len(logo_data)))
+            self.send_header("Cache-Control", "public, max-age=86400")  # Cache for 1 day
+            self.end_headers()
+            self.wfile.write(logo_data)
+        except Exception as e:
+            logging.error(f"Error serving logo: {e}")
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def _handle_update(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
@@ -598,11 +623,9 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
       box-shadow: 0 2px 8px rgba(0,0,0,0.3);
     }}
 
-    header h1 {{
-      font-size: 1.75rem;
-      font-weight: 600;
-      color: {p["accent"]};
-      margin-bottom: 0.25rem;
+    header .logo {{
+      height: 60px;
+      margin-bottom: 0.5rem;
     }}
 
     header p {{
@@ -855,7 +878,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 </head>
 <body>
   <header>
-    <h1>🎵 Spoti2</h1>
+    <img src="/logo.png" alt="Spytify-LE" class="logo" />
     <p>Linux Spotify Desktop Recorder with LastFM Metadata</p>
   </header>
 
