@@ -426,7 +426,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                                     formatted = f'<div class="log-line">{cleaned}</div>'
                                 filtered_lines.append(formatted)
 
-                        logs = "\n".join(filtered_lines[-50:]) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
+                        # Reverse so newest entries appear at top
+                        logs = "\n".join(reversed(filtered_lines[-50:])) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
                     else:
                         # Minimal mode: only show essential status events
                         essential_keywords = [
@@ -469,7 +470,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                                     formatted = f'<div class="log-line">{cleaned}</div>'
                                 filtered_lines.append(formatted)
 
-                        logs = "\n".join(filtered_lines[-30:]) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
+                        # Reverse so newest entries appear at top
+                        logs = "\n".join(reversed(filtered_lines[-30:])) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
 
                     # Update status if we detected a track change
                     if last_track and self.server.app.supervisor._process:
@@ -1147,7 +1149,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
           const logDisplay = document.getElementById('log-display');
           if (data.logs) {{
             logDisplay.innerHTML = data.logs;
-            logDisplay.scrollTop = logDisplay.scrollHeight;
+            // Keep scroll at top since newest entries are at top
+            logDisplay.scrollTop = 0;
           }}
         }})
         .catch(err => console.error('Failed to fetch logs:', err));
