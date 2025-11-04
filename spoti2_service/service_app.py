@@ -306,16 +306,16 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
     server_version = "Spoti2Service/2.0"
 
-    # Modern color palette
+    # Modern color palette with Spotify green
     palette = {
         "bg": "#0d1117",
         "panel": "#161b22",
         "border": "#30363d",
-        "accent": "#58a6ff",
-        "accent_hover": "#79c0ff",
+        "accent": "#1DB954",  # Spotify green
+        "accent_hover": "#1ED760",  # Lighter Spotify green for hover
         "text": "#c9d1d9",
         "text_muted": "#8b949e",
-        "success": "#3fb950",
+        "success": "#1DB954",  # Also use Spotify green for success
         "warning": "#d29922",
         "error": "#f85149",
     }
@@ -677,7 +677,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
       align-items: center;
       gap: 1rem;
       padding: 1rem;
-      background: rgba(88, 166, 255, 0.1);
+      background: rgba(29, 185, 84, 0.1);
       border-radius: 6px;
       margin-bottom: 1rem;
     }}
@@ -812,7 +812,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
     button:hover {{
       transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(88, 166, 255, 0.3);
+      box-shadow: 0 4px 12px rgba(29, 185, 84, 0.3);
     }}
 
     button:active {{
