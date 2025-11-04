@@ -411,9 +411,22 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                             cleaned = cleaned.replace("INFO INFO:", "INFO:")
 
                             if any(keyword in line for keyword in verbose_keywords):
-                                filtered_lines.append(cleaned)
+                                # Add HTML formatting based on log type
+                                if "ERROR" in line:
+                                    formatted = f'<div class="log-error">❌ {cleaned}</div>'
+                                elif "WARNING" in line:
+                                    formatted = f'<div class="log-warning">⚠️ {cleaned}</div>'
+                                elif "Saved:" in line:
+                                    formatted = f'<div class="log-success">✅ {cleaned}</div>'
+                                elif "Fetched" in line or "LastFM" in line:
+                                    formatted = f'<div class="log-info">📊 {cleaned}</div>'
+                                elif "Track changed:" in line:
+                                    formatted = f'<div class="log-track">🎵 {cleaned}</div>'
+                                else:
+                                    formatted = f'<div class="log-line">{cleaned}</div>'
+                                filtered_lines.append(formatted)
 
-                        logs = "\n".join(filtered_lines[-50:]) if filtered_lines else "🎵 Waiting for tracks to record..."
+                        logs = "\n".join(filtered_lines[-50:]) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
                     else:
                         # Minimal mode: only show essential status events
                         essential_keywords = [
@@ -444,9 +457,19 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                                 for prefix in ["INFO:", "DEBUG:"]:
                                     if cleaned.startswith(prefix):
                                         cleaned = cleaned[len(prefix):].strip()
-                                filtered_lines.append(cleaned)
 
-                        logs = "\n".join(filtered_lines[-30:]) if filtered_lines else "🎵 Waiting for tracks to record..."
+                                # Add HTML formatting based on log type
+                                if "ERROR" in line:
+                                    formatted = f'<div class="log-error">❌ {cleaned}</div>'
+                                elif "already exists" in line:
+                                    formatted = f'<div class="log-warning">⏭️ {cleaned}</div>'
+                                elif "Saved:" in line:
+                                    formatted = f'<div class="log-success">✅ {cleaned}</div>'
+                                else:
+                                    formatted = f'<div class="log-line">{cleaned}</div>'
+                                filtered_lines.append(formatted)
+
+                        logs = "\n".join(filtered_lines[-30:]) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
 
                     # Update status if we detected a track change
                     if last_track and self.server.app.supervisor._process:
@@ -757,6 +780,59 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
     .log-container::-webkit-scrollbar-thumb {{
       background: {p["border"]};
       border-radius: 4px;
+    }}
+
+    /* Log Entry Styles */
+    .log-line, .log-success, .log-error, .log-warning, .log-info, .log-track, .log-waiting {{
+      padding: 0.5rem 0.75rem;
+      margin-bottom: 0.5rem;
+      border-left: 3px solid transparent;
+      border-radius: 4px;
+      line-height: 1.5;
+    }}
+
+    .log-success {{
+      background: rgba(29, 185, 84, 0.1);
+      border-left-color: {p["success"]};
+      color: {p["success"]};
+    }}
+
+    .log-error {{
+      background: rgba(248, 81, 73, 0.1);
+      border-left-color: {p["error"]};
+      color: {p["error"]};
+    }}
+
+    .log-warning {{
+      background: rgba(210, 153, 34, 0.1);
+      border-left-color: {p["warning"]};
+      color: {p["warning"]};
+    }}
+
+    .log-info {{
+      background: rgba(29, 185, 84, 0.05);
+      border-left-color: {p["accent"]};
+      color: {p["text"]};
+    }}
+
+    .log-track {{
+      background: rgba(29, 185, 84, 0.08);
+      border-left-color: {p["accent"]};
+      color: {p["accent"]};
+      font-weight: 500;
+    }}
+
+    .log-line {{
+      background: rgba(255, 255, 255, 0.02);
+      border-left-color: {p["border"]};
+      color: {p["text_muted"]};
+    }}
+
+    .log-waiting {{
+      color: {p["text_muted"]};
+      text-align: center;
+      padding: 2rem;
+      font-style: italic;
     }}
 
     /* Forms */
@@ -1070,7 +1146,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         .then(data => {{
           const logDisplay = document.getElementById('log-display');
           if (data.logs) {{
-            logDisplay.textContent = data.logs;
+            logDisplay.innerHTML = data.logs;
             logDisplay.scrollTop = logDisplay.scrollHeight;
           }}
         }})
