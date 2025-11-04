@@ -104,13 +104,19 @@ By default, tracks are saved to `~/Music/Spotify Splitter/<Artist>/<Album>/<Trac
 
 ## Configuration
 
-### LastFM API Key Setup
+### LastFM API Key Setup (Required)
 
-1. **Get your API key** at https://www.last.fm/api/account/create
+**LastFM API key is required** for year and genre metadata tagging.
+
+1. **Get your free API key** at https://www.last.fm/api/account/create
 2. **Add it to the config**:
-   - Via Web UI: Settings tab → LastFM API Key field
-   - Via CLI: Edit `~/.config/spotify_splitter/config.json`
-   - Or set in code: `spotify_splitter/lastfm_api.py` line 18
+   - **Via Web UI (Recommended)**: Settings tab → LastFM API Key field → Save Settings
+   - **Via Config File**: Edit `~/.config/spotify_splitter/config.json` and add:
+     ```json
+     {
+       "lastfm_api_key": "YOUR_API_KEY_HERE"
+     }
+     ```
 
 ### Configuration Profiles
 
