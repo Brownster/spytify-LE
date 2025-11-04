@@ -1,4 +1,4 @@
-# Spoti2 - Linux Spotify Desktop Recorder
+# Spytify-LE - Linux Spotify Desktop Recorder
 
 Record Spotify desktop playback on Linux and save each track as an individual audio file with rich metadata from LastFM.
 
