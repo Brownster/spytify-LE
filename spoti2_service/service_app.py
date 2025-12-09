@@ -205,6 +205,8 @@ class RecorderSupervisor:
             record_args.extend(["--playlist", config["playlist"]])
             if config.get("bundle_playlist"):
                 record_args.append("--bundle-playlist")
+            if config.get("bundle_album_art_uri"):
+                record_args.extend(["--bundle-album-art-uri", config["bundle_album_art_uri"]])
 
         cmd.append("record")
         cmd.extend(record_args)
@@ -531,6 +533,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             "profile": get_value("profile", config.get("profile")),
             "playlist": get_value("playlist") or None,
             "bundle_playlist": get_bool("bundle_playlist"),
+            "bundle_album_art_uri": get_value("bundle_album_art_uri") or None,
             "enable_adaptive": get_bool("enable_adaptive"),
             "enable_monitoring": get_bool("enable_monitoring"),
             "enable_metrics": get_bool("enable_metrics"),
@@ -1066,6 +1069,14 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
           <label>
             <input type="checkbox" name="bundle_playlist" {checked(config.get("bundle_playlist", False))}>
             <span>Bundle as Compilation Album</span>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <span>Bundle Album Artwork URL (optional)</span>
+            <input type="text" name="bundle_album_art_uri" value="{config.get("bundle_album_art_uri", "") or ""}" placeholder="https://example.com/album-cover.jpg" />
+            <div class="help-text">Custom album artwork for bundle playlists (uses first track's artwork if not provided)</div>
           </label>
         </div>
 

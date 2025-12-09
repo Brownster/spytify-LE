@@ -61,6 +61,7 @@ class SegmentManager:
         event_queue: Optional[queue.Queue] = None,
         playlist_path: Optional[Path] = None,
         bundle_playlist: bool = False,
+        bundle_album_art_uri: Optional[str] = None,
         ui_callback: Optional[callable] = None,
         grace_period_ms: int = 500,
         max_correction_ms: int = 2000,
@@ -87,13 +88,27 @@ class SegmentManager:
             self.playlist_path.stem if self.bundle_playlist else None
         )
         self.bundle_track_number = 1
+        self.bundle_album_art_uri = bundle_album_art_uri  # Custom artwork URI for bundle playlists
+        self.bundle_album_art = None  # Store unified album art for bundle playlists
         self.playlist_file = None
+        self.playlist_tracks = set()  # Track paths already in playlist to prevent duplicates
         if self.playlist_path:
             self.playlist_path.parent.mkdir(parents=True, exist_ok=True)
             mode = "a" if self.playlist_path.exists() else "w"
             self.playlist_file = self.playlist_path.open(mode, encoding="utf-8")
             if mode == "w":
                 self.playlist_file.write("#EXTM3U\n")
+            else:
+                # Read existing playlist entries to avoid duplicates
+                try:
+                    with self.playlist_path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            line = line.strip()
+                            if line and not line.startswith("#"):
+                                self.playlist_tracks.add(line)
+                    logger.info("Loaded %d existing tracks from playlist", len(self.playlist_tracks))
+                except Exception as e:
+                    logger.warning("Failed to read existing playlist entries: %s", e)
 
         self.continuous_buffer = AudioSegment.empty()
         self.track_markers: List[TrackMarker] = []
@@ -646,7 +661,25 @@ class SegmentManager:
 
             if audio and track_info.art_uri:
                 try:
-                    img = requests.get(track_info.art_uri).content
+                    # For bundle playlists, use unified album art
+                    if self.bundle_playlist:
+                        if self.bundle_album_art is None:
+                            # Download album art once for the bundle
+                            if self.bundle_album_art_uri:
+                                # Use custom artwork URL if provided
+                                logger.info("Downloading custom album art for bundle playlist from: %s", self.bundle_album_art_uri)
+                                self.bundle_album_art = requests.get(self.bundle_album_art_uri).content
+                            else:
+                                # Fall back to first track's artwork
+                                logger.info("Downloading first track's album art for bundle playlist")
+                                self.bundle_album_art = requests.get(track_info.art_uri).content
+                        # Use the stored unified album art for all tracks
+                        img = self.bundle_album_art
+                        logger.debug("Using unified album art for bundle track")
+                    else:
+                        # For non-bundle playlists, download individual track artwork
+                        img = requests.get(track_info.art_uri).content
+
                     audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
                 except Exception as e:
                     logger.warning("Failed to download or embed cover art: %s", e)
@@ -654,13 +687,19 @@ class SegmentManager:
             if audio:
                 audio.save()
         
-        # Always add to playlist, whether file existed or not
+        # Add to playlist only if not already present
         if self.playlist_file:
             try:
-                self.playlist_file.write(f"{path}\n")
-                self.playlist_file.flush()
-            except Exception:
-                pass
+                path_str = str(path)
+                if path_str not in self.playlist_tracks:
+                    self.playlist_file.write(f"{path_str}\n")
+                    self.playlist_file.flush()
+                    self.playlist_tracks.add(path_str)
+                    logger.debug("Added track to playlist: %s", path)
+                else:
+                    logger.debug("Track already in playlist, skipping: %s", path)
+            except Exception as e:
+                logger.warning("Failed to add track to playlist: %s", e)
 
         if file_already_exists:
             logger.info("Added existing file to playlist: %s", path)

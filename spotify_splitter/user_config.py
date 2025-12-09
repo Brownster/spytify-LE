@@ -18,6 +18,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "debug_mode": False,
     "playlist": None,
     "bundle_playlist": False,
+    "bundle_album_art_uri": None,  # Custom album artwork URL for bundle playlists
     "queue_size": None,
     "blocksize": None,
     "latency": None,

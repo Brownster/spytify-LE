@@ -164,6 +164,11 @@ def record(
         "--bundle-playlist",
         help="Use playlist name as album and tag album artist as 'Various Artists'",
     ),
+    bundle_album_art_uri: str = typer.Option(
+        None,
+        "--bundle-album-art-uri",
+        help="Custom album artwork URL for bundle playlists (defaults to first track's artwork if not provided)",
+    ),
 ):
     """Start recording until interrupted."""
     config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
@@ -190,6 +195,7 @@ def record(
     min_buffer_size = resolve_param("min_buffer_size", min_buffer_size)
     playlist = resolve_param("playlist", playlist)
     bundle_playlist = resolve_param("bundle_playlist", bundle_playlist)
+    bundle_album_art_uri = resolve_param("bundle_album_art_uri", bundle_album_art_uri)
 
     try:
         info = get_spotify_stream_info()
@@ -479,6 +485,7 @@ def record(
         event_queue=event_queue,
         playlist_path=playlist_path,
         bundle_playlist=bundle_playlist,
+        bundle_album_art_uri=bundle_album_art_uri,
         ui_callback=enhanced_ui_callback,
         error_recovery=error_recovery,
         enable_error_recovery=True,
