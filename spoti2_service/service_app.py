@@ -64,6 +64,9 @@ class RecorderSupervisor:
             "details": "Click Start to begin recording",
             "last_exit": "",
             "current_track": "",
+            "timer_enabled": False,
+            "timer_start_time": 0,
+            "timer_duration_seconds": 0,
         }
         self._verbose_logging = False  # Toggle for minimal vs verbose logging
 
@@ -207,6 +210,8 @@ class RecorderSupervisor:
                 record_args.append("--bundle-playlist")
             if config.get("bundle_album_art_uri"):
                 record_args.extend(["--bundle-album-art-uri", config["bundle_album_art_uri"]])
+        if config.get("max_duration"):
+            record_args.extend(["--max-duration", config["max_duration"]])
 
         cmd.append("record")
         cmd.extend(record_args)
@@ -244,6 +249,18 @@ class RecorderSupervisor:
 
             start_time = time.time()
 
+            # Update timer status if max_duration is configured
+            if config.get("max_duration"):
+                from spotify_splitter.duration_parser import parse_duration
+                try:
+                    timer_duration = parse_duration(config["max_duration"])
+                    with self._status_lock:
+                        self._status["timer_enabled"] = True
+                        self._status["timer_start_time"] = start_time
+                        self._status["timer_duration_seconds"] = timer_duration
+                except ValueError:
+                    logging.warning(f"Invalid max_duration format: {config['max_duration']}")
+
             # Give process a moment to start and verify it's running
             time.sleep(2.5)
             if self._process.poll() is None:
@@ -274,6 +291,12 @@ class RecorderSupervisor:
             runtime = time.time() - start_time
             stdout_file.close()
             self._process = None
+
+            # Reset timer status
+            with self._status_lock:
+                self._status["timer_enabled"] = False
+                self._status["timer_start_time"] = 0
+                self._status["timer_duration_seconds"] = 0
 
             # Check if manually stopped - don't auto-restart
             if self._manual_stop:
@@ -983,8 +1006,20 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
           <div class="status-text">
             <div><strong>{state}</strong></div>
             <div class="status-details">{status.get("details", "")}</div>
+            <div id="timer-display" class="status-details" style="display: none; margin-top: 0.5rem; font-weight: 600;"></div>
           </div>
         </div>
+
+        <form method="post" action="/update" style="margin-bottom: 1rem;">
+          <label style="display: block; margin-bottom: 0.5rem;">
+            <span style="color: {p["text"]}; font-weight: 500;">⏱️ Recording Timer (Optional)</span>
+            <input type="text" name="max_duration" value="{config.get("max_duration", "")}"
+                   placeholder="e.g., 4h29m, 90m, 2h30m"
+                   style="width: 100%; padding: 0.75rem; margin-top: 0.5rem; background: {p["bg"]}; border: 1px solid {p["border"]}; border-radius: 6px; color: {p["text"]}; font-size: 0.95rem;" />
+            <div class="help-text">Automatically stop recording after specified duration. Leave empty for continuous recording.</div>
+          </label>
+          <button type="submit" class="secondary" style="width: auto; padding: 0.5rem 1rem; font-size: 0.9rem;">Save Timer</button>
+        </form>
 
         <div class="button-group">
           <form method="post" action="/start" style="flex: 1;">
@@ -1167,13 +1202,43 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         .catch(err => console.error('Failed to fetch logs:', err));
     }}
 
+    // Format seconds as "1h 2m 3s"
+    function formatTime(seconds) {{
+      if (seconds <= 0) return "0s";
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      const parts = [];
+      if (hours > 0) parts.push(hours + "h");
+      if (minutes > 0) parts.push(minutes + "m");
+      if (secs > 0 || parts.length === 0) parts.push(secs + "s");
+      return parts.join(" ");
+    }}
+
     // Refresh status every 2 seconds
     function refreshStatus() {{
       fetch('/status')
         .then(response => response.json())
         .then(data => {{
-          // Update status in UI (could enhance this later)
-          console.log('Status:', data);
+          const timerDisplay = document.getElementById('timer-display');
+
+          // Update timer display if timer is enabled
+          if (data.timer_enabled) {{
+            const now = Date.now() / 1000;
+            const elapsed = Math.floor(now - data.timer_start_time);
+            const remaining = Math.max(0, data.timer_duration_seconds - elapsed);
+            const progress = (elapsed / data.timer_duration_seconds * 100).toFixed(1);
+
+            // Color based on remaining time
+            let color = '#1DB954'; // green
+            if (remaining <= 300) color = '#E74C3C'; // red if < 5min
+            else if (remaining <= 600) color = '#F39C12'; // yellow if < 10min
+
+            timerDisplay.innerHTML = `⏱️ Timer: <span style="color: ${{color}};">${{formatTime(remaining)}}</span> | Progress: ${{progress}}% (${{formatTime(elapsed)}} / ${{formatTime(data.timer_duration_seconds)}})`;
+            timerDisplay.style.display = 'block';
+          }} else {{
+            timerDisplay.style.display = 'none';
+          }}
         }})
         .catch(err => console.error('Failed to fetch status:', err));
     }}

@@ -128,6 +128,14 @@ class LastFMAPI:
             elif isinstance(toptags, dict):
                 genres = [toptags["name"]]
 
+            # If no tags from track.getInfo, try track.getTopTags
+            if not genres:
+                genres = self._get_track_top_tags(artist, title)
+
+            # If still no genres, fallback to artist top tags
+            if not genres:
+                genres = self._get_artist_top_tags(artist)
+
             logger.debug("LastFM track info for %s - %s: genres=%s", artist, title, genres)
 
             return LastFMTrackMetadata(year=year, genres=genres if genres else None)
@@ -135,6 +143,108 @@ class LastFMAPI:
         except requests.RequestException as e:
             logger.debug("LastFM API request failed: %s", e)
             return LastFMTrackMetadata()
+
+    def _get_track_top_tags(self, artist: str, title: str) -> Optional[List[str]]:
+        """
+        Get top tags for a track using track.getTopTags API.
+
+        Returns list of genre tags (limited to top 5).
+        """
+        try:
+            params = {
+                "method": "track.getTopTags",
+                "api_key": self.api_key,
+                "artist": artist,
+                "track": title,
+                "format": "json",
+                "autocorrect": 1,
+            }
+
+            response = self.session.get(LASTFM_API_URL, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if "error" in data:
+                logger.debug("LastFM getTopTags error for %s - %s: %s", artist, title, data.get("message"))
+                return None
+
+            tags = data.get("toptags", {}).get("tag", [])
+            genres = []
+
+            if isinstance(tags, list):
+                # Filter out non-genre tags and limit to top 5
+                for tag in tags[:15]:  # Check top 15, take best 5 genres
+                    tag_name = tag.get("name", "").lower()
+                    # Skip common non-genre tags and descriptors
+                    skip_tags = [
+                        "seen live", "favorite", "favourites", "favorites", "albums i own",
+                        "under 2000 listeners", "male vocalists", "female vocalists",
+                        "male vocalist", "female vocalist", artist.lower()
+                    ]
+                    if tag_name not in skip_tags:
+                        genres.append(tag["name"])
+                        if len(genres) >= 5:
+                            break
+            elif isinstance(tags, dict):
+                genres = [tags.get("name")]
+
+            logger.debug("LastFM top tags for %s - %s: %s", artist, title, genres)
+            return genres if genres else None
+
+        except requests.RequestException as e:
+            logger.debug("LastFM getTopTags request failed: %s", e)
+            return None
+
+    def _get_artist_top_tags(self, artist: str) -> Optional[List[str]]:
+        """
+        Get top tags for an artist using artist.getTopTags API.
+
+        Fallback when track-level tags are not available.
+        Returns list of genre tags (limited to top 5).
+        """
+        try:
+            params = {
+                "method": "artist.getTopTags",
+                "api_key": self.api_key,
+                "artist": artist,
+                "format": "json",
+                "autocorrect": 1,
+            }
+
+            response = self.session.get(LASTFM_API_URL, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            if "error" in data:
+                logger.debug("LastFM artist.getTopTags error for %s: %s", artist, data.get("message"))
+                return None
+
+            tags = data.get("toptags", {}).get("tag", [])
+            genres = []
+
+            if isinstance(tags, list):
+                # Filter out non-genre tags and limit to top 5
+                for tag in tags[:15]:  # Check top 15, take best 5 genres
+                    tag_name = tag.get("name", "").lower()
+                    # Skip common non-genre tags and descriptors
+                    skip_tags = [
+                        "seen live", "favorite", "favourites", "favorites", "albums i own",
+                        "under 2000 listeners", "male vocalists", "female vocalists",
+                        "male vocalist", "female vocalist", artist.lower()
+                    ]
+                    if tag_name not in skip_tags:
+                        genres.append(tag["name"])
+                        if len(genres) >= 5:
+                            break
+            elif isinstance(tags, dict):
+                genres = [tags.get("name")]
+
+            logger.debug("LastFM artist top tags for %s: %s", artist, genres)
+            return genres if genres else None
+
+        except requests.RequestException as e:
+            logger.debug("LastFM artist.getTopTags request failed: %s", e)
+            return None
 
     def _get_album_info(self, artist: str, album: str) -> LastFMTrackMetadata:
         """

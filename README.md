@@ -95,6 +95,42 @@ spotify-splitter record --playlist mysession.m3u
 
 # Bundle playlist tracks as single album
 spotify-splitter record --playlist mysession.m3u --bundle-playlist
+
+# Record with automatic timer (stops after specified duration)
+spotify-splitter record --max-duration "4h29m"
+spotify-splitter record --max-duration "90m" --playlist playlist.m3u
+```
+
+#### Recording with Timer
+
+Automatically stop recording after a specified duration. This is perfect for recording Spotify playlists without having to manually monitor when they end:
+
+```bash
+# Record for 4 hours and 29 minutes
+spotify-splitter record --max-duration "4h29m"
+
+# Record for 90 minutes with playlist creation
+spotify-splitter record --max-duration "90m" --playlist my-favorites.m3u
+
+# Other supported formats
+spotify-splitter record --max-duration "2h30m"  # Hours and minutes
+spotify-splitter record --max-duration "2h"     # Hours only
+spotify-splitter record --max-duration "5400s"  # Seconds
+```
+
+**How to use:**
+1. Start recording with a random song playing
+2. Start your Spotify playlist (first track will be partially recorded and can be skipped)
+3. Check the playlist duration in Spotify (e.g., "4 hours 28 minutes")
+4. Set the timer to that duration plus a minute: `--max-duration "4h29m"`
+5. The app will automatically stop recording when the timer expires
+
+The timer displays in the UI with:
+- Remaining time (color-coded: green > 10min, yellow > 5min, red < 5min)
+- Progress percentage
+- Elapsed time vs total time
+
+The recording stops gracefully, ensuring all buffered audio is processed and the current track is saved completely.
 ```
 
 By default, tracks are saved to `~/Music/Spotify Splitter/<Artist>/<Album>/<Track>.mp3` with full ID3 tags including:

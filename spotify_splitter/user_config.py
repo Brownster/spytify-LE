@@ -19,6 +19,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "playlist": None,
     "bundle_playlist": False,
     "bundle_album_art_uri": None,  # Custom album artwork URL for bundle playlists
+    "max_duration": None,  # Maximum recording duration (e.g., "4h29m")
     "queue_size": None,
     "blocksize": None,
     "latency": None,

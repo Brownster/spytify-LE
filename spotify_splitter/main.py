@@ -169,6 +169,11 @@ def record(
         "--bundle-album-art-uri",
         help="Custom album artwork URL for bundle playlists (defaults to first track's artwork if not provided)",
     ),
+    max_duration: str = typer.Option(
+        None,
+        "--max-duration",
+        help="Maximum recording duration (e.g., '4h29m', '2h30m', '90m', '5400s'). Recording stops automatically when timer expires.",
+    ),
 ):
     """Start recording until interrupted."""
     config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
@@ -196,6 +201,25 @@ def record(
     playlist = resolve_param("playlist", playlist)
     bundle_playlist = resolve_param("bundle_playlist", bundle_playlist)
     bundle_album_art_uri = resolve_param("bundle_album_art_uri", bundle_album_art_uri)
+    max_duration = resolve_param("max_duration", max_duration)
+
+    # Validate max_duration format if provided
+    if max_duration:
+        from .duration_parser import parse_duration, format_remaining_time
+        try:
+            timer_duration = parse_duration(max_duration)
+            if timer_duration < 60:
+                logging.warning(
+                    f"Timer duration very short ({timer_duration}s) - first track may be incomplete"
+                )
+            logging.info(f"Recording timer set for {format_remaining_time(timer_duration)}")
+        except ValueError as e:
+            logging.error(f"Invalid duration format '{max_duration}': {e}")
+            typer.echo(
+                "Error: Invalid duration format. Examples: '4h29m', '2h30m', '90m', '5400s'",
+                err=True
+            )
+            raise typer.Exit(code=1)
 
     try:
         info = get_spotify_stream_info()
@@ -329,7 +353,13 @@ def record(
         "buffer_health": "Unknown",
         "buffer_utilization": 0.0,
         "adaptive_adjustments": 0,
-        "emergency_expansions": 0
+        "emergency_expansions": 0,
+        # Timer state
+        "timer_enabled": False,
+        "timer_start_time": None,
+        "timer_duration_seconds": 0,
+        "timer_elapsed_seconds": 0,
+        "timer_remaining_seconds": 0,
     }
     
     def create_enhanced_ui():
@@ -370,8 +400,32 @@ def record(
         
         if ui_state["buffer_warnings"] > 0:
             table.add_row("⚠️  Buffer Warnings:", str(ui_state["buffer_warnings"]))
-        
-        return Panel(table, title="Spotify Splitter (Adaptive)", border_style="blue")
+
+        # Timer information (if enabled)
+        if ui_state["timer_enabled"]:
+            from .duration_parser import format_remaining_time
+
+            remaining = ui_state["timer_remaining_seconds"]
+            elapsed = ui_state["timer_elapsed_seconds"]
+            total = ui_state["timer_duration_seconds"]
+
+            # Calculate progress percentage
+            progress_pct = (elapsed / total * 100) if total > 0 else 0
+
+            # Color based on remaining time
+            if remaining > 600:  # > 10 minutes
+                time_color = "green"
+            elif remaining > 300:  # > 5 minutes
+                time_color = "yellow"
+            else:
+                time_color = "red"
+
+            table.add_row("⏱️  Timer:", Text(format_remaining_time(remaining), style=time_color))
+            table.add_row("⏳ Progress:", f"{progress_pct:.1f}% ({format_remaining_time(elapsed)} / {format_remaining_time(total)})")
+
+        # Update panel title to indicate timer mode
+        title = "Spotify Splitter (Timed Recording)" if ui_state["timer_enabled"] else "Spotify Splitter (Adaptive)"
+        return Panel(table, title=title, border_style="blue")
     
     live = Live(create_enhanced_ui(), refresh_per_second=2)
     
@@ -643,9 +697,29 @@ def record(
                 logging.info("MPRIS thread started")
                 
                 # Keep the main thread alive while MPRIS and audio recording run
+                # Initialize timer if max_duration is specified
+                if max_duration:
+                    ui_state["timer_enabled"] = True
+                    ui_state["timer_start_time"] = time.time()
+                    ui_state["timer_duration_seconds"] = timer_duration
+
                 try:
                     while processing_thread.is_alive():
                         time.sleep(0.1)
+
+                        # Update timer state if enabled
+                        if ui_state["timer_enabled"]:
+                            elapsed = time.time() - ui_state["timer_start_time"]
+                            ui_state["timer_elapsed_seconds"] = int(elapsed)
+                            ui_state["timer_remaining_seconds"] = max(0, ui_state["timer_duration_seconds"] - int(elapsed))
+
+                            # Check if timer expired
+                            if elapsed >= ui_state["timer_duration_seconds"]:
+                                logging.info("Recording timer expired - initiating graceful shutdown")
+                                ui_state["recording_status"] = "Timer expired - stopping recording..."
+                                live.update(create_enhanced_ui())
+                                break
+
                 except KeyboardInterrupt:
                     raise
                 
