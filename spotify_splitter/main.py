@@ -169,6 +169,11 @@ def record(
         "--bundle-album-art-uri",
         help="Custom album artwork URL for bundle playlists (defaults to first track's artwork if not provided)",
     ),
+    playlist_base_path: str = typer.Option(
+        None,
+        "--playlist-base-path",
+        help="Base path for M3U playlist entries (e.g., NAS mount point like '/mnt/storage/music'). Allows mapping local recording paths to remote server paths.",
+    ),
     max_duration: str = typer.Option(
         None,
         "--max-duration",
@@ -201,6 +206,7 @@ def record(
     playlist = resolve_param("playlist", playlist)
     bundle_playlist = resolve_param("bundle_playlist", bundle_playlist)
     bundle_album_art_uri = resolve_param("bundle_album_art_uri", bundle_album_art_uri)
+    playlist_base_path = resolve_param("playlist_base_path", playlist_base_path)
     max_duration = resolve_param("max_duration", max_duration)
 
     # Validate max_duration format if provided
@@ -479,10 +485,22 @@ def record(
             ui_state["recording_status"] = f"Export error: {track_title} (attempt {attempt})"
             
         elif action == "recovery_success" and isinstance(data, dict):
-            track_title = data.get("track", {}).get("title", "Unknown")
-            attempts = data.get("attempts", 1)
-            ui_state["recording_status"] = f"Recovery successful: {track_title} (after {attempts} attempts)"
-            logging.info(f"Processing recovery successful for {track_title} after {attempts} attempts")
+            track = data.get("track")
+            message = data.get("message", "Recovery successful")
+            attempts = data.get("attempts", None)
+            if hasattr(track, 'title'):
+                track_title = track.title
+            elif isinstance(track, dict):
+                track_title = track.get("title", "Unknown")
+            else:
+                track_title = "Unknown"
+
+            if attempts:
+                ui_state["recording_status"] = f"✓ Recovered: {track_title} (after {attempts} attempts)"
+                logging.info(f"Processing recovery successful for {track_title} after {attempts} attempts")
+            else:
+                ui_state["recording_status"] = f"✓ Saved: {track_title}"
+                logging.info(f"{message}: {track_title}")
             
         elif action == "degraded_export" and isinstance(data, dict):
             track_title = data.get("track", {}).get("title", "Unknown")
@@ -493,14 +511,15 @@ def record(
             
         elif action == "processing_failure" and isinstance(data, dict):
             track = data.get("track")
+            error_msg = data.get("error", "Processing failed")
             if hasattr(track, 'title'):
                 track_title = track.title
             elif isinstance(track, dict):
                 track_title = track.get("title", "Unknown")
             else:
                 track_title = "Unknown"
-            ui_state["recording_status"] = f"Processing failed: {track_title}"
-            logging.error(f"Complete processing failure for {track_title}")
+            ui_state["recording_status"] = f"Failed: {track_title}"
+            logging.error(f"Processing failure for {track_title}: {error_msg}")
             
         elif action == "degraded_mode" and isinstance(data, dict):
             reason = data.get("reason", "Unknown")
@@ -540,6 +559,7 @@ def record(
         playlist_path=playlist_path,
         bundle_playlist=bundle_playlist,
         bundle_album_art_uri=bundle_album_art_uri,
+        playlist_base_path=playlist_base_path,
         ui_callback=enhanced_ui_callback,
         error_recovery=error_recovery,
         enable_error_recovery=True,

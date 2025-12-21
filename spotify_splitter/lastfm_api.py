@@ -272,31 +272,51 @@ class LastFMAPI:
 
             album_data = data.get("album", {})
 
-            # Extract year from wiki or tags
+            # Extract year from tags first (more reliable than wiki dates)
+            # Wiki published dates often reflect page edits, not original release dates
             year = None
-
-            # Try to get year from wiki published date
-            wiki = album_data.get("wiki", {})
-            if wiki and "published" in wiki:
-                published = wiki["published"]
-                # Published format is usually like "01 Jan 2020, 00:00"
-                try:
-                    # Extract year from date string
-                    parts = published.split(",")
-                    if len(parts) >= 1:
-                        date_parts = parts[0].split()
-                        if len(date_parts) >= 3:
-                            year = int(date_parts[2])
-                except (ValueError, IndexError):
-                    pass
-
-            # Try tags as genres (optional)
             genres = []
+
             tags = album_data.get("tags", {}).get("tag", [])
             if isinstance(tags, list):
-                genres = [tag["name"] for tag in tags[:5]]
+                for tag in tags:
+                    tag_name = tag.get("name", "")
+                    # Check if tag is a 4-digit year (prioritize this over wiki)
+                    if year is None and tag_name.isdigit() and len(tag_name) == 4:
+                        tag_year = int(tag_name)
+                        # Validate year is reasonable (1900-2100)
+                        if 1900 <= tag_year <= 2100:
+                            year = tag_year
+                            logger.debug("Found release year in tags: %d", year)
+                    # Collect non-year tags as genres
+                    elif not tag_name.isdigit():
+                        if len(genres) < 5:
+                            genres.append(tag_name)
             elif isinstance(tags, dict):
-                genres = [tags["name"]]
+                tag_name = tags.get("name", "")
+                if tag_name.isdigit() and len(tag_name) == 4:
+                    year = int(tag_name) if 1900 <= int(tag_name) <= 2100 else None
+                elif not tag_name.isdigit():
+                    genres = [tag_name]
+
+            # Only fall back to wiki published date if no year found in tags
+            if year is None:
+                wiki = album_data.get("wiki", {})
+                if wiki and "published" in wiki:
+                    published = wiki["published"]
+                    # Published format is usually like "01 Jan 2020, 00:00"
+                    try:
+                        # Extract year from date string
+                        parts = published.split(",")
+                        if len(parts) >= 1:
+                            date_parts = parts[0].split()
+                            if len(date_parts) >= 3:
+                                wiki_year = int(date_parts[2])
+                                if 1900 <= wiki_year <= 2100:
+                                    year = wiki_year
+                                    logger.debug("Using wiki published year: %d", year)
+                    except (ValueError, IndexError):
+                        pass
 
             logger.debug("LastFM album info for %s - %s: year=%s, genres=%s", artist, album, year, genres)
 

@@ -62,6 +62,7 @@ class SegmentManager:
         playlist_path: Optional[Path] = None,
         bundle_playlist: bool = False,
         bundle_album_art_uri: Optional[str] = None,
+        playlist_base_path: Optional[str] = None,
         ui_callback: Optional[callable] = None,
         grace_period_ms: int = 500,
         max_correction_ms: int = 2000,
@@ -78,8 +79,20 @@ class SegmentManager:
         self.audio_queue = audio_queue
         self.event_queue = event_queue
         self.ui_callback = ui_callback
-        self.playlist_path = Path(playlist_path) if playlist_path else None
+
+        # Handle playlist path - if just a filename, place in output directory
+        if playlist_path:
+            playlist_path = Path(playlist_path)
+            if not playlist_path.is_absolute() and playlist_path.parent == Path('.'):
+                # Just a filename, place in output directory root
+                self.playlist_path = output_dir / playlist_path
+            else:
+                self.playlist_path = playlist_path
+        else:
+            self.playlist_path = None
+
         self.bundle_playlist = bundle_playlist
+        self.playlist_base_path = playlist_base_path or str(output_dir)
         self.lastfm_api_key = lastfm_api_key
         self.allow_overwrite = allow_overwrite
         if self.bundle_playlist and not self.playlist_path:
@@ -275,7 +288,7 @@ class SegmentManager:
         if self.enable_error_recovery:
             success = self._process_segment_with_recovery(start_marker, end_marker)
             if not success:
-                logger.error("Failed to process segment after all recovery attempts: %s", start_marker.track_info.title)
+                # Don't log error here - let _handle_processing_failure check if file exists first
                 self._handle_processing_failure(start_marker, end_marker)
         else:
             # Process without error recovery (legacy mode)
@@ -637,6 +650,24 @@ class SegmentManager:
                     except Exception as e:
                         logger.warning("Failed to fetch LastFM metadata: %s", e)
 
+            # If still no year, try to parse from track title or album name
+            # Common patterns: "Song - 2008 Remaster", "Remastered 2006", "2004 Remaster"
+            if not year:
+                import re
+                # Check track title first
+                year_match = re.search(r'(?:remaster(?:ed)?|remix|edition|version)\s+(\d{4})|(\d{4})\s+remaster',
+                                      track_info.title, re.IGNORECASE)
+                if not year_match:
+                    # Check album name
+                    year_match = re.search(r'(?:remaster(?:ed)?|remix|edition|version)\s+(\d{4})|(\d{4})\s+remaster',
+                                          track_info.album, re.IGNORECASE)
+
+                if year_match:
+                    parsed_year = int(year_match.group(1) or year_match.group(2))
+                    if 1900 <= parsed_year <= 2100:
+                        year = parsed_year
+                        logger.info("Parsed year from track/album name: %s", year)
+
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
             if self.bundle_album_name:
@@ -687,15 +718,24 @@ class SegmentManager:
             if audio:
                 audio.save()
         
-        # Add to playlist only if not already present
+        # Add to playlist with base path remapping
         if self.playlist_file:
             try:
-                path_str = str(path)
+                # Convert local path to remote path using playlist_base_path
+                # Get relative path from output_dir and join with base path
+                try:
+                    relative_path = path.relative_to(self.output_dir)
+                    playlist_entry = Path(self.playlist_base_path) / relative_path
+                except ValueError:
+                    # If path is not relative to output_dir, use absolute path
+                    playlist_entry = path
+
+                path_str = str(playlist_entry)
                 if path_str not in self.playlist_tracks:
                     self.playlist_file.write(f"{path_str}\n")
                     self.playlist_file.flush()
                     self.playlist_tracks.add(path_str)
-                    logger.debug("Added track to playlist: %s", path)
+                    logger.debug("Added track to playlist: %s (mapped from %s)", path_str, path)
                 else:
                     logger.debug("Track already in playlist, skipping: %s", path)
             except Exception as e:
@@ -1129,13 +1169,37 @@ class SegmentManager:
     def _handle_processing_failure(self, start_marker: TrackMarker, end_marker: TrackMarker) -> None:
         """
         Handle complete processing failure after all recovery attempts.
-        
+
         Args:
             start_marker: Start marker for the failed segment
             end_marker: End marker for the failed segment
         """
-        logger.error("Complete processing failure for: %s", start_marker.track_info.title)
-        
+        # CRITICAL: Check if file actually exists before logging failure
+        # File might have been created successfully even if processing returned False
+        expected_path = self._get_track_path(start_marker.track_info)
+
+        if expected_path.exists() and expected_path.stat().st_size > 0:
+            # File exists and is not empty - processing actually succeeded!
+            logger.info("Track file exists despite processing errors - recovery was successful: %s",
+                       start_marker.track_info.title)
+
+            # Notify UI of successful recovery instead of failure
+            if self.ui_callback:
+                self.ui_callback("recovery_success", {
+                    "track": start_marker.track_info,
+                    "message": "Track saved successfully after error recovery"
+                })
+        else:
+            # File truly doesn't exist - this is a real failure
+            logger.error("Complete processing failure for: %s (file not created)", start_marker.track_info.title)
+
+            # Notify UI of actual processing failure
+            if self.ui_callback:
+                self.ui_callback("processing_failure", {
+                    "track": start_marker.track_info,
+                    "error": "All recovery attempts failed - file not created"
+                })
+
         # Clean up buffer and markers to continue with next track
         cleanup_timestamp = end_marker.timestamp
         self.continuous_buffer = self.continuous_buffer[cleanup_timestamp :]
@@ -1143,13 +1207,6 @@ class SegmentManager:
             marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
             for marker in self.track_markers[1:]
         ]
-        
-        # Notify UI of processing failure
-        if self.ui_callback:
-            self.ui_callback("processing_failure", {
-                "track": start_marker.track_info,
-                "error": "All recovery attempts failed"
-            })
         
         # Generate error diagnostics
         if self.enable_error_recovery:

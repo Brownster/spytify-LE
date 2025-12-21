@@ -210,6 +210,8 @@ class RecorderSupervisor:
                 record_args.append("--bundle-playlist")
             if config.get("bundle_album_art_uri"):
                 record_args.extend(["--bundle-album-art-uri", config["bundle_album_art_uri"]])
+            if config.get("playlist_base_path"):
+                record_args.extend(["--playlist-base-path", config["playlist_base_path"]])
         if config.get("max_duration"):
             record_args.extend(["--max-duration", config["max_duration"]])
 
@@ -557,6 +559,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             "playlist": get_value("playlist") or None,
             "bundle_playlist": get_bool("bundle_playlist"),
             "bundle_album_art_uri": get_value("bundle_album_art_uri") or None,
+            "playlist_base_path": get_value("playlist_base_path") or None,
             "enable_adaptive": get_bool("enable_adaptive"),
             "enable_monitoring": get_bool("enable_monitoring"),
             "enable_metrics": get_bool("enable_metrics"),
@@ -568,7 +571,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         merged = config.copy()
         merged.update(updates)
         # Normalize paths
-        for key in ("output", "playlist"):
+        for key in ("output", "playlist", "playlist_base_path"):
             if merged.get(key):
                 merged[key] = str(Path(merged[key]).expanduser())
 
@@ -1112,6 +1115,14 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             <span>Bundle Album Artwork URL (optional)</span>
             <input type="text" name="bundle_album_art_uri" value="{config.get("bundle_album_art_uri", "") or ""}" placeholder="https://example.com/album-cover.jpg" />
             <div class="help-text">Custom album artwork for bundle playlists (uses first track's artwork if not provided)</div>
+          </label>
+        </div>
+
+        <div class="form-group">
+          <label>
+            <span>M3U Playlist Base Path (optional)</span>
+            <input type="text" name="playlist_base_path" value="{config.get("playlist_base_path", "") or ""}" placeholder="/mnt/storage/music" />
+            <div class="help-text">Base path for M3U entries. Maps local recording paths to remote server paths (e.g., recording to ~/Music but listing as /mnt/nas/music in playlist)</div>
           </label>
         </div>
 
