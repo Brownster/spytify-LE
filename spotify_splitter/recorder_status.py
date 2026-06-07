@@ -78,8 +78,9 @@ class RecorderStatus:
 class AtomicStatusWriter:
     """Write recorder status as an atomically replaced JSON file."""
 
-    def __init__(self, path: Path | str):
+    def __init__(self, path: Path | str, fsync: bool = True):
         self.path = Path(path)
+        self.fsync = fsync
 
     def write(self, status: RecorderStatus) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -100,10 +101,12 @@ class AtomicStatusWriter:
                 json.dump(payload, tmp, indent=2, sort_keys=True)
                 tmp.write("\n")
                 tmp.flush()
-                os.fsync(tmp.fileno())
+                if self.fsync:
+                    os.fsync(tmp.fileno())
 
             os.replace(tmp_path, self.path)
-            self._fsync_parent()
+            if self.fsync:
+                self._fsync_parent()
         except Exception:
             if tmp_path and tmp_path.exists():
                 tmp_path.unlink(missing_ok=True)

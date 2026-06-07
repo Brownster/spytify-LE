@@ -47,6 +47,7 @@ except Exception:  # pragma: no cover - fallback if gi is missing
         pass
 
 app = typer.Typer(add_completion=False)
+_LAST_ERROR_UNSET = object()
 
 
 @app.callback()
@@ -407,33 +408,45 @@ def record(
         "timer_remaining_seconds": 0,
     }
 
-    status_writer = AtomicStatusWriter(status_file) if status_file else None
+    status_writer = AtomicStatusWriter(status_file, fsync=False) if status_file else None
     recorder_status = RecorderStatus(state="starting")
+    status_lock = threading.Lock()
+    last_metric_status_publish = 0.0
 
-    def publish_status(state: Optional[str] = None, last_error: Optional[str] = None) -> None:
+    def publish_status(state: Optional[str] = None, last_error=_LAST_ERROR_UNSET) -> None:
+        nonlocal last_metric_status_publish
         if not status_writer:
             return
-        if state:
-            recorder_status.state = state
-        if last_error is not None:
-            recorder_status.last_error = last_error
-        if ui_state["current_track"]:
-            recorder_status.current_track = TrackStatus.from_track_info(ui_state["current_track"])
-        recorder_status.tracks_recorded = ui_state["tracks_recorded"]
-        recorder_status.timer = TimerStatus(
-            enabled=ui_state["timer_enabled"],
-            elapsed_seconds=ui_state["timer_elapsed_seconds"],
-            remaining_seconds=ui_state["timer_remaining_seconds"],
-        )
-        recorder_status.audio = AudioStatus(
-            queue_depth=audio_queue.qsize(),
-            dropped_frames=0,
-            buffer_warnings=ui_state["buffer_warnings"],
-        )
-        try:
-            status_writer.write(recorder_status)
-        except Exception as e:
-            logging.debug(f"Error writing recorder status file: {e}")
+        is_metric_only = state is None and last_error is _LAST_ERROR_UNSET
+        now = time.monotonic()
+        if is_metric_only and now - last_metric_status_publish < 1.0:
+            return
+
+        with status_lock:
+            if state:
+                recorder_status.state = state
+            if last_error is not _LAST_ERROR_UNSET:
+                recorder_status.last_error = last_error
+            if ui_state["current_track"]:
+                recorder_status.current_track = TrackStatus.from_track_info(ui_state["current_track"])
+            recorder_status.tracks_recorded = ui_state["tracks_recorded"]
+            recorder_status.timer = TimerStatus(
+                enabled=ui_state["timer_enabled"],
+                elapsed_seconds=ui_state["timer_elapsed_seconds"],
+                remaining_seconds=ui_state["timer_remaining_seconds"],
+            )
+            recorder_status.audio = AudioStatus(
+                queue_depth=audio_queue.qsize(),
+                # TODO(Pass 2): populate from real callback drop accounting.
+                dropped_frames=0,
+                buffer_warnings=ui_state["buffer_warnings"],
+            )
+            try:
+                status_writer.write(recorder_status)
+                if is_metric_only:
+                    last_metric_status_publish = now
+            except Exception as e:
+                logging.debug(f"Error writing recorder status file: {e}")
     
     def create_enhanced_ui():
         table = Table(show_header=False, box=None, padding=(0, 1))
@@ -542,7 +555,7 @@ def record(
             if success:
                 ui_state["recording_status"] = f"Recovery successful: {recovery_action}"
                 logging.info(f"Stream recovery successful: {error_type} -> {recovery_action}")
-                publish_status("recording", "")
+                publish_status("recording", None)
             else:
                 ui_state["recording_status"] = f"Recovery failed: {recovery_action}"
                 logging.error(f"Stream recovery failed: {error_type} -> {recovery_action}")
@@ -578,7 +591,7 @@ def record(
             else:
                 ui_state["recording_status"] = f"✓ Saved: {track_title}"
                 logging.info(f"{message}: {track_title}")
-            publish_status("recording", "")
+            publish_status("recording", None)
             
         elif action == "degraded_export" and isinstance(data, dict):
             track_title = data.get("track", {}).get("title", "Unknown")

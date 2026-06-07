@@ -86,3 +86,15 @@ def test_atomic_status_writer_replaces_existing_file(tmp_path):
     data = writer.read()
     assert data["state"] == "stopped"
     assert data["last_error"] == "done"
+
+
+def test_atomic_status_writer_can_skip_fsync(tmp_path, monkeypatch):
+    path = tmp_path / "recorder-status.json"
+    writer = AtomicStatusWriter(path, fsync=False)
+    fsync_calls = []
+    monkeypatch.setattr("spotify_splitter.recorder_status.os.fsync", fsync_calls.append)
+
+    writer.write(RecorderStatus(state="recording"))
+
+    assert writer.read()["state"] == "recording"
+    assert fsync_calls == []

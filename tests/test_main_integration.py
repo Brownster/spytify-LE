@@ -148,6 +148,7 @@ class TestMainIntegration:
         data = json.loads(status_file.read_text(encoding="utf-8"))
         assert data["schema_version"] == 1
         assert data["state"] == "stopped"
+        assert data["last_error"] is None
         assert data["current_track"]["artist"] == "Ada"
         assert data["current_track"]["title"] == "Status Song"
         assert data["audio"]["queue_depth"] >= 0
