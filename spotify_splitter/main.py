@@ -723,7 +723,7 @@ def record(
             cleanup_done = True
             publish_status("stopped")
 
-    def handle_control_command(command: dict) -> None:
+    def handle_control_command(command: dict) -> bool:
         cmd = command.get("cmd")
         if cmd == "stop":
             logging.info("Received stdin control command: stop")
@@ -731,8 +731,10 @@ def record(
             publish_status("stopping")
             graceful_shutdown()
             control_stop_requested.set()
+            return True
         else:
             logging.warning("Ignoring unsupported stdin control command: %s", cmd)
+            return False
 
     def read_control_stdin() -> None:
         for line in sys.stdin:
@@ -747,7 +749,8 @@ def record(
             if not isinstance(command, dict):
                 logging.warning("Invalid stdin control command type: %s", type(command).__name__)
                 continue
-            handle_control_command(command)
+            if handle_control_command(command):
+                return
 
     if control_stdin:
         control_thread = threading.Thread(target=read_control_stdin, daemon=True)

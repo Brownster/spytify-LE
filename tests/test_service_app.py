@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
+import subprocess
 
 from spoti2_service.service_app import RecorderSupervisor
 from spotify_splitter.user_config import DEFAULT_CONFIG
@@ -36,6 +37,11 @@ class ControlledProcess(FakeProcess):
     def kill(self):
         self.killed = True
         self.exit_code = 137
+
+
+class HangingProcess(ControlledProcess):
+    def wait(self, timeout=None):
+        raise subprocess.TimeoutExpired("spotify-splitter", timeout)
 
 
 def write_status(path: Path, **overrides):
@@ -94,6 +100,25 @@ def test_stop_sends_graceful_control_command(tmp_path):
     assert command == {"cmd": "stop", "flush": True}
     assert process.terminated is False
     assert process.killed is False
+    assert supervisor.status()["state"] == "stopped"
+
+
+def test_stop_falls_back_to_terminate_after_control_timeout(tmp_path):
+    supervisor = RecorderSupervisor(
+        status_path=tmp_path / "status.json",
+        graceful_stop_timeout=0.1,
+    )
+    process = HangingProcess()
+    supervisor._process = process
+    supervisor._set_status("running", "Recording")
+
+    supervisor.stop()
+
+    command = json.loads(process.stdin.getvalue().strip())
+    assert command == {"cmd": "stop", "flush": True}
+    assert process.terminated is True
+    assert process.killed is True
+    assert supervisor._process is None
     assert supervisor.status()["state"] == "stopped"
 
 
