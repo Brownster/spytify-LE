@@ -91,7 +91,8 @@ longer parses logs for status, and shutdown is provably single-pathed. Tests upd
 the new seams, green.
 
 **Progress:** `spotify_splitter.recorder_status` defines the schema and atomic JSON
-writer. Engine and web-service wiring remains open.
+writer. The current `record` command can write it with `--status-file`; engine and
+web-service wiring remains open.
 
 ---
 

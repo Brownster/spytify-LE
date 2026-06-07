@@ -25,6 +25,13 @@ from .performance_optimizer import PerformanceOptimizer
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
+from .recorder_status import (
+    AtomicStatusWriter,
+    AudioStatus,
+    RecorderStatus,
+    TimerStatus,
+    TrackStatus,
+)
 from .util import get_spotify_stream_info
 from .tagging_api import tag_output
 from .user_config import (
@@ -194,6 +201,11 @@ def record(
         "--max-duration",
         help="Maximum recording duration (e.g., '4h29m', '2h30m', '90m', '5400s'). Recording stops automatically when timer expires.",
     ),
+    status_file: str = typer.Option(
+        None,
+        "--status-file",
+        help="Write structured recorder status to this JSON file using atomic replace.",
+    ),
 ):
     """Start recording until interrupted."""
     config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
@@ -229,6 +241,7 @@ def record(
     bundle_album_art_uri = resolve_param("bundle_album_art_uri", bundle_album_art_uri)
     playlist_base_path = resolve_param("playlist_base_path", playlist_base_path)
     max_duration = resolve_param("max_duration", max_duration)
+    status_file = resolve_param("status_file", status_file)
 
     if spotifyd_mode:
         player = "spotifyd"
@@ -393,6 +406,34 @@ def record(
         "timer_elapsed_seconds": 0,
         "timer_remaining_seconds": 0,
     }
+
+    status_writer = AtomicStatusWriter(status_file) if status_file else None
+    recorder_status = RecorderStatus(state="starting")
+
+    def publish_status(state: Optional[str] = None, last_error: Optional[str] = None) -> None:
+        if not status_writer:
+            return
+        if state:
+            recorder_status.state = state
+        if last_error is not None:
+            recorder_status.last_error = last_error
+        if ui_state["current_track"]:
+            recorder_status.current_track = TrackStatus.from_track_info(ui_state["current_track"])
+        recorder_status.tracks_recorded = ui_state["tracks_recorded"]
+        recorder_status.timer = TimerStatus(
+            enabled=ui_state["timer_enabled"],
+            elapsed_seconds=ui_state["timer_elapsed_seconds"],
+            remaining_seconds=ui_state["timer_remaining_seconds"],
+        )
+        recorder_status.audio = AudioStatus(
+            queue_depth=audio_queue.qsize(),
+            dropped_frames=0,
+            buffer_warnings=ui_state["buffer_warnings"],
+        )
+        try:
+            status_writer.write(recorder_status)
+        except Exception as e:
+            logging.debug(f"Error writing recorder status file: {e}")
     
     def create_enhanced_ui():
         table = Table(show_header=False, box=None, padding=(0, 1))
@@ -464,14 +505,18 @@ def record(
     def enhanced_ui_callback(action, data):
         if action == "processing":
             ui_state["recording_status"] = f"Processing: {data.title}"
+            publish_status("processing")
         elif action == "saved":
             ui_state["tracks_recorded"] += 1
             ui_state["recording_status"] = f"Saved: {data.title}"
+            publish_status("recording")
         elif action == "buffer_warning":
             ui_state["buffer_warnings"] += 1
+            publish_status()
         elif action == "buffer_health" and isinstance(data, dict):
             ui_state["buffer_health"] = data.get("status", "Unknown")
             ui_state["buffer_utilization"] = data.get("utilization", 0.0)
+            publish_status()
         elif action == "buffer_adjustment":
             ui_state["adaptive_adjustments"] += 1
         elif action == "emergency_expansion":
@@ -479,6 +524,7 @@ def record(
         elif action == "buffer_overflow" and isinstance(data, dict):
             ui_state["buffer_warnings"] += 1
             logging.warning(f"Buffer overflow: queue_size={data.get('queue_size')}, max_size={data.get('max_size')}")
+            publish_status()
         
         # Enhanced error recovery UI callbacks
         elif action == "stream_error" and isinstance(data, dict):
@@ -486,6 +532,7 @@ def record(
             recovery_action = data.get("recovery_action", "unknown")
             ui_state["recording_status"] = f"Stream error: {error_type} - attempting {recovery_action}"
             logging.warning(f"Stream error: {error_type} -> {recovery_action}")
+            publish_status("error", f"{error_type}: {recovery_action}")
             
         elif action == "stream_recovery_result" and isinstance(data, dict):
             success = data.get("success", False)
@@ -495,20 +542,24 @@ def record(
             if success:
                 ui_state["recording_status"] = f"Recovery successful: {recovery_action}"
                 logging.info(f"Stream recovery successful: {error_type} -> {recovery_action}")
+                publish_status("recording", "")
             else:
                 ui_state["recording_status"] = f"Recovery failed: {recovery_action}"
                 logging.error(f"Stream recovery failed: {error_type} -> {recovery_action}")
+                publish_status("error", f"{error_type}: {recovery_action}")
                 
         elif action == "processing_error" and isinstance(data, dict):
             track_title = data.get("track", {}).get("title", "Unknown")
             attempt = data.get("attempt", 1)
             recovery_action = data.get("recovery_action", "unknown")
             ui_state["recording_status"] = f"Processing error: {track_title} (attempt {attempt}) - {recovery_action}"
+            publish_status("error", f"{track_title}: {recovery_action}")
             
         elif action == "export_error" and isinstance(data, dict):
             track_title = data.get("track", {}).get("title", "Unknown")
             attempt = data.get("attempt", 1)
             ui_state["recording_status"] = f"Export error: {track_title} (attempt {attempt})"
+            publish_status("error", f"{track_title}: export attempt {attempt}")
             
         elif action == "recovery_success" and isinstance(data, dict):
             track = data.get("track")
@@ -527,6 +578,7 @@ def record(
             else:
                 ui_state["recording_status"] = f"✓ Saved: {track_title}"
                 logging.info(f"{message}: {track_title}")
+            publish_status("recording", "")
             
         elif action == "degraded_export" and isinstance(data, dict):
             track_title = data.get("track", {}).get("title", "Unknown")
@@ -534,6 +586,7 @@ def record(
             export_type = data.get("type", "processing")
             ui_state["recording_status"] = f"Degraded {export_type}: {track_title}"
             logging.warning(f"Degraded export for {track_title}: {reason}")
+            publish_status("recording", f"{track_title}: degraded {export_type}")
             
         elif action == "processing_failure" and isinstance(data, dict):
             track = data.get("track")
@@ -546,12 +599,14 @@ def record(
                 track_title = "Unknown"
             ui_state["recording_status"] = f"Failed: {track_title}"
             logging.error(f"Processing failure for {track_title}: {error_msg}")
+            publish_status("error", f"{track_title}: {error_msg}")
             
         elif action == "degraded_mode" and isinstance(data, dict):
             reason = data.get("reason", "Unknown")
             settings = data.get("settings", "Unknown settings")
             ui_state["recording_status"] = f"Degraded mode: {reason}"
             logging.warning(f"Entered degraded mode - {reason}: {settings}")
+            publish_status("recording", f"Degraded mode: {reason}")
             
         elif action == "feature_degraded" and isinstance(data, dict):
             feature = data.get("feature", "unknown")
@@ -562,6 +617,7 @@ def record(
             error_type = data.get("error_type", "Unknown")
             ui_state["recording_status"] = f"Critical error: {error_type}"
             logging.critical(f"Critical error escalated: {error_type}")
+            publish_status("error", error_type)
             
             # Show recommendations if available
             recommendations = data.get("recommendations", [])
@@ -622,6 +678,7 @@ def record(
     ui_state["buffer_warnings"] = 0
     ui_state["adaptive_adjustments"] = 0
     ui_state["emergency_expansions"] = 0
+    publish_status("waiting")
     
     processing_thread = threading.Thread(target=manager.run, daemon=True)
     cleanup_done = False
@@ -638,6 +695,7 @@ def record(
             processing_thread.join()
         manager.flush_cache()
         cleanup_done = True
+        publish_status("stopped")
 
     # Start metrics collection if enabled
     if metrics_collector:
@@ -703,14 +761,17 @@ def record(
                     ui_state["recording_status"] = "First track - will be discarded"
                 else:
                     ui_state["recording_status"] = f"Recording: {track.artist} - {track.title}"
+                publish_status("recording")
                 live.update(create_enhanced_ui())
                 event_queue.put(("track_change", track))
 
             def on_status(status: str):
                 if status == "Playing":
                     ui_state["recording_status"] = "Recording audio..."
+                    publish_status("recording")
                 elif status == "Paused":
                     ui_state["recording_status"] = "Playback paused"
+                    publish_status("paused")
                 live.update(create_enhanced_ui())
 
             with audio_stream:
@@ -762,6 +823,8 @@ def record(
                     ui_state["timer_enabled"] = True
                     ui_state["timer_start_time"] = time.time()
                     ui_state["timer_duration_seconds"] = timer_duration
+                    ui_state["timer_remaining_seconds"] = timer_duration
+                    publish_status("recording")
 
                 try:
                     while processing_thread.is_alive():
@@ -770,13 +833,17 @@ def record(
                         # Update timer state if enabled
                         if ui_state["timer_enabled"]:
                             elapsed = time.time() - ui_state["timer_start_time"]
-                            ui_state["timer_elapsed_seconds"] = int(elapsed)
-                            ui_state["timer_remaining_seconds"] = max(0, ui_state["timer_duration_seconds"] - int(elapsed))
+                            elapsed_seconds = int(elapsed)
+                            if elapsed_seconds != ui_state["timer_elapsed_seconds"]:
+                                ui_state["timer_elapsed_seconds"] = elapsed_seconds
+                                ui_state["timer_remaining_seconds"] = max(0, ui_state["timer_duration_seconds"] - elapsed_seconds)
+                                publish_status("recording")
 
                             # Check if timer expired
                             if elapsed >= ui_state["timer_duration_seconds"]:
                                 logging.info("Recording timer expired - initiating graceful shutdown")
                                 ui_state["recording_status"] = "Timer expired - stopping recording..."
+                                publish_status("stopping")
                                 live.update(create_enhanced_ui())
                                 graceful_shutdown()
                                 break

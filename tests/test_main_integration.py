@@ -9,6 +9,7 @@ import pytest
 import threading
 import time
 import queue
+import json
 from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 import tempfile
@@ -17,6 +18,7 @@ import os
 from spotify_splitter.main import app
 from spotify_splitter.config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferStrategy
+from spotify_splitter.mpris import TrackInfo
 from spotify_splitter.util import StreamInfo
 from typer.testing import CliRunner
 
@@ -98,6 +100,57 @@ class TestMainIntegration:
         
         # Verify cleanup was called
         mock_manager_instance.shutdown_cleanup.assert_called_once()
+
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_status_file_written(
+        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info
+    ):
+        """Ensure recorder status is written as structured JSON."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+        mock_manager_instance.run = Mock(side_effect=lambda: time.sleep(0.15))
+
+        def mock_track_events_func(on_change, on_status, *args, **kwargs):
+            on_change(TrackInfo(
+                artist="Ada",
+                title="Status Song",
+                album="Signals",
+                art_uri=None,
+                id="track-1",
+                track_number=1,
+                position=1.5,
+                duration_ms=200000,
+            ))
+            on_status("Playing")
+
+        mock_track_events.side_effect = mock_track_events_func
+
+        status_file = Path(self.temp_dir) / "recorder-status.json"
+        result = self.runner.invoke(app, [
+            'record',
+            '--output', self.temp_dir,
+            '--status-file', str(status_file),
+        ])
+
+        assert result.exit_code == 0
+        data = json.loads(status_file.read_text(encoding="utf-8"))
+        assert data["schema_version"] == 1
+        assert data["state"] == "stopped"
+        assert data["current_track"]["artist"] == "Ada"
+        assert data["current_track"]["title"] == "Status Song"
+        assert data["audio"]["queue_depth"] >= 0
     
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
