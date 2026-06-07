@@ -73,7 +73,7 @@ do **not** yet.
 
 - [ ] Create `RecorderEngine` (new module, e.g. `spotify_splitter/engine.py`) that owns:
   audio stream lifecycle, MPRIS subscription, the segment manager, and start/stop/pause/resume.
-- [ ] Define **structured recorder state** (dataclass): `state`, `current_track`,
+- [x] Define **structured recorder state** (dataclass): `state`, `current_track`,
   `tracks_recorded`, `timer_*`, `dropped_frames`, `queue_depth`, `last_error`.
 - [ ] **Status channel:** engine writes state to a JSON file (atomic write) on change/tick.
 - [ ] **Control channel:** engine accepts start/stop/pause/resume/reconfigure commands
@@ -89,6 +89,9 @@ do **not** yet.
 **Acceptance:** CLI and web UI behave as before from the user's view, but the web UI no
 longer parses logs for status, and shutdown is provably single-pathed. Tests updated to
 the new seams, green.
+
+**Progress:** `spotify_splitter.recorder_status` defines the schema and atomic JSON
+writer. Engine and web-service wiring remains open.
 
 ---
 
