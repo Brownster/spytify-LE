@@ -19,6 +19,7 @@ from spotify_splitter.main import app
 from spotify_splitter.config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferStrategy
 from spotify_splitter.mpris import TrackInfo
+from spotify_splitter.recorder_status import AtomicStatusWriter
 from spotify_splitter.util import StreamInfo
 from typer.testing import CliRunner
 
@@ -152,6 +153,53 @@ class TestMainIntegration:
         assert data["current_track"]["artist"] == "Ada"
         assert data["current_track"]["title"] == "Status Song"
         assert data["audio"]["queue_depth"] >= 0
+
+    @patch('spotify_splitter.main.STATUS_HEARTBEAT_INTERVAL_SECONDS', 0.05)
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.AudioStream')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_status_heartbeat_without_adaptive_monitoring(
+        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        mock_track_events, mock_get_stream_info
+    ):
+        """Ensure status heartbeat does not depend on adaptive monitoring."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        write_states = []
+
+        class SpyStatusWriter(AtomicStatusWriter):
+            def write(self, status):
+                write_states.append(status.state)
+                return super().write(status)
+
+        mock_stream_instance = Mock()
+        mock_basic_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+        mock_manager_instance.run = Mock(side_effect=lambda: time.sleep(0.22))
+
+        mock_track_events.return_value = None
+
+        status_file = Path(self.temp_dir) / "recorder-status.json"
+        with patch('spotify_splitter.main.AtomicStatusWriter', SpyStatusWriter):
+            result = self.runner.invoke(app, [
+                'record',
+                '--output', self.temp_dir,
+                '--no-adaptive',
+                '--status-file', str(status_file),
+            ])
+
+        assert result.exit_code == 0
+        assert mock_basic_stream.called
+        assert mock_enhanced_stream.call_count == 0
+        assert write_states.count("waiting") >= 2
     
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')

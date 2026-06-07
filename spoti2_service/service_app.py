@@ -27,6 +27,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "service.log"
 RECORDER_LOG_PATH = LOG_DIR / "recorder.log"
 RECORDER_STATUS_PATH = LOG_DIR / "status.json"
+RECORDER_STATUS_STALE_SECONDS = 15.0
 
 
 def configure_logging(verbose: bool = False) -> None:
@@ -178,11 +179,12 @@ class RecorderSupervisor:
         return data
 
     def _is_recorder_status_current(self, recorder_status: Dict[str, Any]) -> bool:
-        if not self._process or self._process.poll() is not None:
+        proc = self._process
+        if not proc or proc.poll() is not None:
             return False
 
         pid = recorder_status.get("pid")
-        if pid and pid != self._process.pid:
+        if pid and pid != proc.pid:
             return False
 
         # A paused process cannot update the status file while SIGSTOP'd, so pid
@@ -200,7 +202,7 @@ class RecorderSupervisor:
                 updated = updated.replace(tzinfo=timezone.utc)
         except Exception:
             return True
-        return (datetime.now(timezone.utc) - updated).total_seconds() <= 15.0
+        return (datetime.now(timezone.utc) - updated).total_seconds() <= RECORDER_STATUS_STALE_SECONDS
 
     def _merge_recorder_status(self, supervisor_status: Dict[str, Any]) -> Dict[str, Any]:
         recorder_status = self._read_recorder_status()

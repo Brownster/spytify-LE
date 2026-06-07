@@ -106,6 +106,25 @@ def test_status_ignores_stale_pid(tmp_path):
     assert "tracks_recorded" not in status
 
 
+def test_status_process_snapshot_survives_concurrent_clear(tmp_path):
+    status_path = tmp_path / "status.json"
+    write_status(status_path)
+    supervisor = RecorderSupervisor(status_path=status_path)
+
+    class ClearingProcess(FakeProcess):
+        def poll(self):
+            supervisor._process = None
+            return None
+
+    supervisor._process = ClearingProcess(pid=1234)
+    supervisor._set_status("running", "Recording")
+
+    status = supervisor.status()
+
+    assert status["current_track"] == "Ada - Status Song"
+    assert status["recorder_status_stale"] is False
+
+
 def test_paused_status_uses_matching_pid_even_when_timestamp_is_old(tmp_path):
     status_path = tmp_path / "status.json"
     old_timestamp = (

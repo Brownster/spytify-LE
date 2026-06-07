@@ -48,6 +48,7 @@ except Exception:  # pragma: no cover - fallback if gi is missing
 
 app = typer.Typer(add_completion=False)
 _LAST_ERROR_UNSET = object()
+STATUS_HEARTBEAT_INTERVAL_SECONDS = 5.0
 
 
 @app.callback()
@@ -412,6 +413,7 @@ def record(
     recorder_status = RecorderStatus(state="starting")
     status_lock = threading.Lock()
     last_metric_status_publish = 0.0
+    last_status_heartbeat = 0.0
 
     def publish_status(state: Optional[str] = None, last_error=_LAST_ERROR_UNSET) -> None:
         nonlocal last_metric_status_publish
@@ -842,6 +844,11 @@ def record(
                 try:
                     while processing_thread.is_alive():
                         time.sleep(0.1)
+                        now = time.monotonic()
+
+                        if status_writer and now - last_status_heartbeat >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
+                            publish_status()
+                            last_status_heartbeat = now
 
                         # Update timer state if enabled
                         if ui_state["timer_enabled"]:
