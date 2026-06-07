@@ -103,7 +103,7 @@ split, thread ownership, and migration steps.
 `RecorderEngineConfig`, and the first `RecorderEngine` runtime shell. `record()` builds
 the resolved config before constructing the current pipeline, and the engine now owns
 runtime queues, the segment-processing thread lifecycle, the stdin control reader, and
-the guarded stop/control cleanup path.
+timer tick state plus the guarded stop/control cleanup path.
 
 ---
 
