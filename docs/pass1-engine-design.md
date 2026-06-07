@@ -103,6 +103,50 @@ use `engine.run()` when no interactive render loop is needed.
 This keeps display timing out of the engine while avoiding duplicated lifecycle,
 heartbeat, and timer logic in each frontend.
 
+## Start And Wait Sequencing
+
+`start()` must be non-blocking and must leave the engine in a state where frontend
+render loops can poll `is_running()` / `status()` immediately. The ordered startup is:
+
+1. Build and retain the selected audio stream (`EnhancedAudioStream` when adaptive
+   management is active, otherwise `AudioStream`).
+2. Enter the audio stream context. If stream setup fails, raise a domain exception
+   before starting worker threads.
+3. Start the segment-processing thread.
+4. Start the optional buffer-health monitor thread.
+5. Start the MPRIS tracking thread with engine-owned `on_change` / `on_status`
+   callbacks that update engine facts and emit observer events.
+6. Start the optional stdin control reader if configured.
+7. Start timer state when `timer_duration_seconds` is configured.
+8. Start the engine lifecycle/heartbeat loop thread, then return from `start()`.
+
+The lifecycle/heartbeat loop owns:
+
+- status heartbeat writes on the configured interval
+- timer ticks and timer-expiry `stop(flush=True)`
+- normal loop exit detection when processing stops
+- emitting `tick` observer events for frontends
+
+`wait()` blocks until the engine reaches stopped state. It should wait on the stopped
+event, then join engine-owned threads with bounded joins where appropriate. `run()` is
+only `start()` followed by `wait()`.
+
+`stop(flush=True)` remains the only cleanup path. It must:
+
+1. publish/emit `stopping`
+2. run `SegmentManager.shutdown_cleanup()` when `flush=True`
+3. enqueue `("shutdown", None)`
+4. join the processing thread
+5. flush the manager cache
+6. exit the audio stream context
+7. set the stopped event
+8. publish/emit `stopped`
+
+The CLI wrapper catches `KeyboardInterrupt`, calls `engine.stop(flush=True)`, then
+`engine.wait()`. The CLI still owns Rich rendering and display strings; it must not
+own stream, MPRIS, heartbeat, timer expiry, or recorder thread lifecycle after this
+slice lands.
+
 ## Errors And Exit Codes
 
 The engine must not raise `typer.Exit`. It raises plain domain exceptions instead:
