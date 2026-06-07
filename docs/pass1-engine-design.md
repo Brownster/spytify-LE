@@ -120,6 +120,13 @@ render loops can poll `is_running()` / `status()` immediately. The ordered start
 7. Start timer state when `timer_duration_seconds` is configured.
 8. Start the engine lifecycle/heartbeat loop thread, then return from `start()`.
 
+`start()` must be all-or-nothing. Steps 2-8 run inside a guarded startup block. If any
+step fails after the audio stream context has been entered, `start()` must request stop,
+join any already-started joinable threads, exit the audio stream context, mark the
+engine stopped/error as appropriate, and then re-raise a domain exception. This
+preserves today's `with audio_stream:` unwind behavior after the engine moves to manual
+context management.
+
 The lifecycle/heartbeat loop owns:
 
 - status heartbeat writes on the configured interval
@@ -127,9 +134,22 @@ The lifecycle/heartbeat loop owns:
 - normal loop exit detection when processing stops
 - emitting `tick` observer events for frontends
 
-`wait()` blocks until the engine reaches stopped state. It should wait on the stopped
-event, then join engine-owned threads with bounded joins where appropriate. `run()` is
-only `start()` followed by `wait()`.
+`wait()` blocks until the engine reaches stopped state. It waits on the stopped event
+and must not swallow `KeyboardInterrupt`; the CLI wrapper needs to receive Ctrl-C and
+call `engine.stop(flush=True)`. `run()` is only `start()` followed by `wait()`.
+
+Thread joins are explicit:
+
+- Processing thread: joined by `stop()` after `("shutdown", None)` is enqueued.
+- MPRIS thread: daemon, not joined in Pass 1. `track_events()` runs a blocking
+  `GLib.MainLoop`; joining it without a cooperative `loop.quit()` path would hang.
+  Cooperative MPRIS shutdown can be added later by storing the loop and scheduling
+  `GLib.idle_add(loop.quit)`, then joining.
+- Buffer-health monitor thread: daemon, not joined; it exits when processing stops.
+- Stdin control reader thread: daemon, not joined; it exits after stop command or EOF.
+- Lifecycle/heartbeat loop thread: daemon, not joined by `wait()`. If it triggers
+  timer expiry and calls `stop()`, joining it from `wait()` or `stop()` risks self-join
+  deadlocks.
 
 `stop(flush=True)` remains the only cleanup path. It must:
 
@@ -141,6 +161,10 @@ only `start()` followed by `wait()`.
 6. exit the audio stream context
 7. set the stopped event
 8. publish/emit `stopped`
+
+The stream remains open while `shutdown_cleanup()` drains the final buffered audio,
+matching today's `with audio_stream:` behavior. Stopping capture before draining is a
+Pass 2 revisit once the chunk ledger/export-worker pipeline exists.
 
 The CLI wrapper catches `KeyboardInterrupt`, calls `engine.stop(flush=True)`, then
 `engine.wait()`. The CLI still owns Rich rendering and display strings; it must not
