@@ -114,6 +114,7 @@ class RecorderEngine:
         self._control_thread: Optional[threading.Thread] = None
         self._cleanup_done = False
         self._cleanup_lock = threading.Lock()
+        self._stopped = threading.Event()
 
     def set_status_publisher(self, status_publisher: StatusPublisher) -> None:
         self._status_publisher = status_publisher
@@ -144,11 +145,12 @@ class RecorderEngine:
         return bool(self._processing_thread and self._processing_thread.is_alive())
 
     def is_running(self) -> bool:
+        """Return true only while recorder work is actively running."""
         return self.processing_is_alive() and not self.is_stopped()
 
     def is_stopped(self) -> bool:
-        with self._cleanup_lock:
-            return self._cleanup_done
+        """Return true after guarded cleanup completes."""
+        return self._stopped.is_set()
 
     def wait_processing(self, timeout: Optional[float] = None) -> None:
         if self._processing_thread:
@@ -207,6 +209,7 @@ class RecorderEngine:
             if self._segment_manager:
                 self._segment_manager.flush_cache()
             self._cleanup_done = True
+            self._stopped.set()
             self._publish_status("stopped")
 
     def handle_command(self, command: dict) -> bool:

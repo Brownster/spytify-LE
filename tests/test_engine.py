@@ -98,6 +98,22 @@ class FakeThread:
         self.join_calls += 1
 
 
+class BlockingManager:
+    def __init__(self):
+        self.entered_shutdown = threading.Event()
+        self.release_shutdown = threading.Event()
+        self.shutdown_calls = 0
+        self.flush_calls = 0
+
+    def shutdown_cleanup(self):
+        self.shutdown_calls += 1
+        self.entered_shutdown.set()
+        self.release_shutdown.wait(timeout=1.0)
+
+    def flush_cache(self):
+        self.flush_calls += 1
+
+
 def test_engine_creates_runtime_queues_from_config():
     engine = RecorderEngine(make_config(queue_size=123))
 
@@ -162,6 +178,27 @@ def test_engine_stopped_predicate_tracks_cleanup():
 
     assert engine.is_stopped() is True
     assert engine.is_running() is False
+
+
+def test_engine_stopped_predicate_does_not_block_during_cleanup():
+    engine = RecorderEngine(make_config())
+    manager = BlockingManager()
+    thread = FakeThread()
+    engine.attach_segment_manager(manager, thread)
+
+    stopper = threading.Thread(target=engine.stop)
+    stopper.start()
+    assert manager.entered_shutdown.wait(timeout=1.0)
+
+    assert engine.is_stopped() is False
+
+    manager.release_shutdown.set()
+    stopper.join(timeout=1.0)
+
+    assert not stopper.is_alive()
+    assert engine.is_stopped() is True
+    assert manager.shutdown_calls == 1
+    assert manager.flush_calls == 1
 
 
 def test_engine_start_processing_requires_configured_thread():
