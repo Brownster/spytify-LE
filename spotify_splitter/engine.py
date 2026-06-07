@@ -10,6 +10,7 @@ import json
 import logging
 import queue
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional, Protocol
@@ -31,6 +32,26 @@ class RecorderConfigError(RecorderError):
 
 class RecorderDbusError(RecorderError):
     """Raised when MPRIS/D-Bus setup fails."""
+
+
+@dataclass(frozen=True)
+class TimerSnapshot:
+    """Current engine timer facts."""
+
+    enabled: bool
+    duration_seconds: int = 0
+    elapsed_seconds: int = 0
+    remaining_seconds: int = 0
+    expired: bool = False
+
+
+@dataclass(frozen=True)
+class TimerTick:
+    """Timer tick result for frontend/status updates."""
+
+    snapshot: TimerSnapshot
+    elapsed_changed: bool = False
+    expired: bool = False
 
 
 class SegmentManagerLike(Protocol):
@@ -115,6 +136,10 @@ class RecorderEngine:
         self._cleanup_done = False
         self._cleanup_lock = threading.Lock()
         self._stopped = threading.Event()
+        self._timer_duration_seconds = config.timer_duration_seconds or 0
+        self._timer_start: Optional[float] = None
+        self._timer_elapsed_seconds = 0
+        self._timer_remaining_seconds = self._timer_duration_seconds
 
     def set_status_publisher(self, status_publisher: StatusPublisher) -> None:
         self._status_publisher = status_publisher
@@ -151,6 +176,41 @@ class RecorderEngine:
     def is_stopped(self) -> bool:
         """Return true after guarded cleanup completes."""
         return self._stopped.is_set()
+
+    def is_timer_enabled(self) -> bool:
+        return self._timer_duration_seconds > 0
+
+    def start_timer(self, now: Optional[float] = None) -> TimerSnapshot:
+        if not self.is_timer_enabled():
+            return self.timer_snapshot()
+        self._timer_start = time.monotonic() if now is None else now
+        self._timer_elapsed_seconds = 0
+        self._timer_remaining_seconds = self._timer_duration_seconds
+        return self.timer_snapshot()
+
+    def tick_timer(self, now: Optional[float] = None) -> TimerTick:
+        if not self.is_timer_enabled() or self._timer_start is None:
+            return TimerTick(self.timer_snapshot())
+
+        current_time = time.monotonic() if now is None else now
+        elapsed = max(0.0, current_time - self._timer_start)
+        elapsed_seconds = int(elapsed)
+        remaining_seconds = max(0, self._timer_duration_seconds - elapsed_seconds)
+        elapsed_changed = elapsed_seconds != self._timer_elapsed_seconds
+
+        self._timer_elapsed_seconds = elapsed_seconds
+        self._timer_remaining_seconds = remaining_seconds
+        expired = elapsed >= self._timer_duration_seconds
+        return TimerTick(self.timer_snapshot(expired=expired), elapsed_changed, expired)
+
+    def timer_snapshot(self, expired: bool = False) -> TimerSnapshot:
+        return TimerSnapshot(
+            enabled=self.is_timer_enabled(),
+            duration_seconds=self._timer_duration_seconds,
+            elapsed_seconds=self._timer_elapsed_seconds,
+            remaining_seconds=self._timer_remaining_seconds,
+            expired=expired,
+        )
 
     def wait_processing(self, timeout: Optional[float] = None) -> None:
         if self._processing_thread:

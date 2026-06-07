@@ -446,7 +446,6 @@ def record(
         "emergency_expansions": 0,
         # Timer state
         "timer_enabled": False,
-        "timer_start_time": None,
         "timer_duration_seconds": 0,
         "timer_elapsed_seconds": 0,
         "timer_remaining_seconds": 0,
@@ -492,6 +491,12 @@ def record(
                     last_metric_status_publish = now
             except Exception as e:
                 logging.debug(f"Error writing recorder status file: {e}")
+
+    def apply_timer_snapshot(snapshot) -> None:
+        ui_state["timer_enabled"] = snapshot.enabled
+        ui_state["timer_duration_seconds"] = snapshot.duration_seconds
+        ui_state["timer_elapsed_seconds"] = snapshot.elapsed_seconds
+        ui_state["timer_remaining_seconds"] = snapshot.remaining_seconds
     
     def create_enhanced_ui():
         table = Table(show_header=False, box=None, padding=(0, 1))
@@ -868,11 +873,8 @@ def record(
                 
                 # Keep the main thread alive while MPRIS and audio recording run
                 # Initialize timer if max_duration is specified
-                if max_duration:
-                    ui_state["timer_enabled"] = True
-                    ui_state["timer_start_time"] = time.time()
-                    ui_state["timer_duration_seconds"] = timer_duration
-                    ui_state["timer_remaining_seconds"] = timer_duration
+                if engine.is_timer_enabled():
+                    apply_timer_snapshot(engine.start_timer())
                     publish_status("recording")
 
                 try:
@@ -888,16 +890,15 @@ def record(
                             last_status_heartbeat = now
 
                         # Update timer state if enabled
-                        if ui_state["timer_enabled"]:
-                            elapsed = time.time() - ui_state["timer_start_time"]
-                            elapsed_seconds = int(elapsed)
-                            if elapsed_seconds != ui_state["timer_elapsed_seconds"]:
-                                ui_state["timer_elapsed_seconds"] = elapsed_seconds
-                                ui_state["timer_remaining_seconds"] = max(0, ui_state["timer_duration_seconds"] - elapsed_seconds)
+                        if engine.is_timer_enabled():
+                            timer_tick = engine.tick_timer()
+                            if timer_tick.elapsed_changed:
+                                apply_timer_snapshot(timer_tick.snapshot)
                                 publish_status("recording")
 
                             # Check if timer expired
-                            if elapsed >= ui_state["timer_duration_seconds"]:
+                            if timer_tick.expired:
+                                apply_timer_snapshot(timer_tick.snapshot)
                                 logging.info("Recording timer expired - initiating graceful shutdown")
                                 ui_state["recording_status"] = "Timer expired - stopping recording..."
                                 publish_status("stopping")

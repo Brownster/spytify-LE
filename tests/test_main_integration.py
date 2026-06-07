@@ -18,6 +18,7 @@ import os
 from spotify_splitter.main import app
 from spotify_splitter.config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferStrategy
+from spotify_splitter.engine import TimerSnapshot, TimerTick
 from spotify_splitter.mpris import TrackInfo
 from spotify_splitter.recorder_status import AtomicStatusWriter
 from spotify_splitter.util import StreamInfo
@@ -268,6 +269,63 @@ class TestMainIntegration:
         ])
 
         assert result.exit_code == 0
+        mock_manager_instance.shutdown_cleanup.assert_called_once()
+
+    @patch('spotify_splitter.main.RecorderEngine.tick_timer')
+    @patch('spotify_splitter.main.RecorderEngine.start_timer')
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.AudioStream')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_timer_expiry_uses_engine_tick(
+        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        mock_track_events, mock_get_stream_info, mock_start_timer, mock_tick_timer
+    ):
+        """Ensure timer expiry is driven by the engine timer tick."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_basic_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        stop_event = threading.Event()
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock(side_effect=stop_event.set)
+        mock_manager_instance.run = Mock(side_effect=lambda: stop_event.wait(timeout=1.0))
+
+        mock_track_events.return_value = None
+        mock_start_timer.return_value = TimerSnapshot(
+            enabled=True,
+            duration_seconds=1,
+            elapsed_seconds=0,
+            remaining_seconds=1,
+        )
+        mock_tick_timer.return_value = TimerTick(
+            snapshot=TimerSnapshot(
+                enabled=True,
+                duration_seconds=1,
+                elapsed_seconds=1,
+                remaining_seconds=0,
+                expired=True,
+            ),
+            elapsed_changed=True,
+            expired=True,
+        )
+
+        result = self.runner.invoke(app, [
+            'record',
+            '--output', self.temp_dir,
+            '--no-adaptive',
+            '--max-duration', '1s',
+        ])
+
+        assert result.exit_code == 0
+        mock_start_timer.assert_called_once()
+        mock_tick_timer.assert_called()
         mock_manager_instance.shutdown_cleanup.assert_called_once()
     
     @patch('spotify_splitter.main.get_spotify_stream_info')

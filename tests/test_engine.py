@@ -201,6 +201,49 @@ def test_engine_stopped_predicate_does_not_block_during_cleanup():
     assert manager.flush_calls == 1
 
 
+def test_engine_timer_is_disabled_without_duration():
+    engine = RecorderEngine(make_config(timer_duration_seconds=None))
+
+    assert engine.is_timer_enabled() is False
+    snapshot = engine.start_timer(now=10.0)
+    tick = engine.tick_timer(now=20.0)
+
+    assert snapshot.enabled is False
+    assert tick.snapshot.enabled is False
+    assert tick.elapsed_changed is False
+    assert tick.expired is False
+
+
+def test_engine_timer_tracks_elapsed_remaining_and_expiry():
+    engine = RecorderEngine(make_config(timer_duration_seconds=5))
+
+    snapshot = engine.start_timer(now=100.0)
+    assert snapshot.enabled is True
+    assert snapshot.duration_seconds == 5
+    assert snapshot.elapsed_seconds == 0
+    assert snapshot.remaining_seconds == 5
+    assert snapshot.expired is False
+
+    tick = engine.tick_timer(now=102.2)
+    assert tick.elapsed_changed is True
+    assert tick.expired is False
+    assert tick.snapshot.elapsed_seconds == 2
+    assert tick.snapshot.remaining_seconds == 3
+
+    same_second_tick = engine.tick_timer(now=102.8)
+    assert same_second_tick.elapsed_changed is False
+    assert same_second_tick.expired is False
+    assert same_second_tick.snapshot.elapsed_seconds == 2
+    assert same_second_tick.snapshot.remaining_seconds == 3
+
+    expired_tick = engine.tick_timer(now=105.0)
+    assert expired_tick.elapsed_changed is True
+    assert expired_tick.expired is True
+    assert expired_tick.snapshot.elapsed_seconds == 5
+    assert expired_tick.snapshot.remaining_seconds == 0
+    assert expired_tick.snapshot.expired is True
+
+
 def test_engine_start_processing_requires_configured_thread():
     engine = RecorderEngine(make_config())
 
