@@ -6,12 +6,13 @@ This module starts with the stable types needed to extract orchestration from
 
 from __future__ import annotations
 
+import json
 import logging
 import queue
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Callable, Iterable, Optional, Protocol
 
 from .util import StreamInfo
 
@@ -42,6 +43,7 @@ class SegmentManagerLike(Protocol):
 
 StatusPublisher = Callable[[Optional[str]], None]
 ThreadTarget = Callable[[], None]
+ControlStopCallback = Callable[[], None]
 
 
 @dataclass(frozen=True)
@@ -109,6 +111,7 @@ class RecorderEngine:
         self._status_publisher = status_publisher
         self._segment_manager: Optional[SegmentManagerLike] = None
         self._processing_thread: Optional[threading.Thread] = None
+        self._control_thread: Optional[threading.Thread] = None
         self._cleanup_done = False
         self._cleanup_lock = threading.Lock()
 
@@ -143,6 +146,45 @@ class RecorderEngine:
     def wait_processing(self, timeout: Optional[float] = None) -> None:
         if self._processing_thread:
             self._processing_thread.join(timeout=timeout)
+
+    def start_control_reader(
+        self,
+        input_stream: Iterable[str],
+        on_stop_requested: Optional[ControlStopCallback] = None,
+    ) -> threading.Thread:
+        self._control_thread = threading.Thread(
+            target=self.read_control_stream,
+            args=(input_stream, on_stop_requested),
+            daemon=True,
+        )
+        self._control_thread.start()
+        return self._control_thread
+
+    def wait_control_reader(self, timeout: Optional[float] = None) -> None:
+        if self._control_thread:
+            self._control_thread.join(timeout=timeout)
+
+    def read_control_stream(
+        self,
+        input_stream: Iterable[str],
+        on_stop_requested: Optional[ControlStopCallback] = None,
+    ) -> None:
+        for line in input_stream:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                command = json.loads(line)
+            except json.JSONDecodeError as e:
+                logging.warning("Invalid stdin control command: %s", e)
+                continue
+            if not isinstance(command, dict):
+                logging.warning("Invalid stdin control command type: %s", type(command).__name__)
+                continue
+            if command.get("cmd") == "stop" and on_stop_requested:
+                on_stop_requested()
+            if self.handle_command(command):
+                return
 
     def stop(self, flush: bool = True) -> None:
         with self._cleanup_lock:

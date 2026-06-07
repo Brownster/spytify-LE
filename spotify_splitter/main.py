@@ -1,7 +1,6 @@
 import threading
 import logging
 import os
-import json
 import sys
 from pathlib import Path
 from typing import Optional
@@ -741,31 +740,11 @@ def record(
     def graceful_shutdown() -> None:
         engine.stop(flush=True)
 
-    def handle_control_command(command: dict) -> bool:
-        cmd = command.get("cmd")
-        if cmd == "stop":
-            ui_state["recording_status"] = "Stop requested - finalizing recording..."
-        return engine.handle_command(command)
-
-    def read_control_stdin() -> None:
-        for line in sys.stdin:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                command = json.loads(line)
-            except json.JSONDecodeError as e:
-                logging.warning("Invalid stdin control command: %s", e)
-                continue
-            if not isinstance(command, dict):
-                logging.warning("Invalid stdin control command type: %s", type(command).__name__)
-                continue
-            if handle_control_command(command):
-                return
+    def on_control_stop_requested() -> None:
+        ui_state["recording_status"] = "Stop requested - finalizing recording..."
 
     if control_stdin:
-        control_thread = threading.Thread(target=read_control_stdin, daemon=True)
-        control_thread.start()
+        engine.start_control_reader(sys.stdin, on_stop_requested=on_control_stop_requested)
 
     # Start metrics collection if enabled
     if metrics_collector:

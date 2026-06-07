@@ -1,5 +1,6 @@
 """Tests for recorder engine seam types."""
 
+import io
 from pathlib import Path
 import threading
 
@@ -177,3 +178,39 @@ def test_engine_handle_unknown_command_keeps_reader_running():
 
     assert should_exit is False
     assert not engine.control_stop_requested.is_set()
+
+
+def test_engine_control_reader_ignores_invalid_input_before_stop():
+    statuses = []
+    stop_callbacks = []
+    engine = RecorderEngine(make_config(), status_publisher=statuses.append)
+    manager = FakeManager()
+    engine.attach_segment_manager(manager, FakeThread())
+    stream = io.StringIO(
+        "\n"
+        "not json\n"
+        "[]\n"
+        '{"cmd":"pause"}\n'
+        '{"cmd":"stop","flush":true}\n'
+        '{"cmd":"stop","flush":true}\n'
+    )
+
+    engine.read_control_stream(stream, on_stop_requested=lambda: stop_callbacks.append("stop"))
+
+    assert stop_callbacks == ["stop"]
+    assert engine.control_stop_requested.is_set()
+    assert manager.shutdown_calls == 1
+    assert statuses == ["stopping", "stopped"]
+
+
+def test_engine_start_control_reader_runs_on_daemon_thread():
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    engine.attach_segment_manager(manager, FakeThread())
+
+    thread = engine.start_control_reader(io.StringIO('{"cmd":"stop","flush":true}\n'))
+    engine.wait_control_reader(timeout=1.0)
+
+    assert thread.daemon is True
+    assert not thread.is_alive()
+    assert engine.control_stop_requested.is_set()
