@@ -25,6 +25,7 @@ from .metrics_collector import MetricsCollector
 from .performance_dashboard import PerformanceDashboard, DashboardConfig
 from .performance_optimizer import PerformanceOptimizer
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
+from .engine import RecorderConfigError, RecorderEngineConfig
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
 from .recorder_status import (
@@ -655,23 +656,54 @@ def record(
     allow_overwrite = config.get("allow_overwrite", False)
     lastfm_api_key = config.get("lastfm_api_key")
 
+    try:
+        engine_config = RecorderEngineConfig(
+            stream_info=info,
+            output_dir=Path(out_dir) if out_dir else OUTPUT_DIR,
+            fmt=fmt,
+            player=player,
+            dump_metadata=dump_metadata,
+            queue_size=effective_queue_size,
+            blocksize=effective_blocksize,
+            latency=effective_latency,
+            enable_adaptive=effective_adaptive,
+            enable_monitoring=effective_monitoring,
+            enable_metrics=effective_metrics,
+            debug_mode=effective_debug,
+            min_buffer_size=min_buffer_size,
+            max_buffer_size=max_buffer_size,
+            playlist_path=playlist_path,
+            bundle_playlist=bundle_playlist,
+            bundle_album_art_uri=bundle_album_art_uri,
+            playlist_base_path=playlist_base_path,
+            max_duration=max_duration,
+            timer_duration_seconds=timer_duration if max_duration else None,
+            allow_overwrite=allow_overwrite,
+            lastfm_api_key=lastfm_api_key,
+            status_file=Path(status_file) if status_file else None,
+            control_stdin=control_stdin,
+        )
+    except RecorderConfigError as e:
+        logging.error(f"Invalid recorder configuration: {e}")
+        raise typer.Exit(code=1)
+
     manager = SegmentManager(
         samplerate=info.samplerate,
-        output_dir=Path(out_dir) if out_dir else OUTPUT_DIR,
-        fmt=fmt,
+        output_dir=engine_config.output_dir,
+        fmt=engine_config.fmt,
         audio_queue=audio_queue,
         event_queue=event_queue,
-        playlist_path=playlist_path,
-        bundle_playlist=bundle_playlist,
-        bundle_album_art_uri=bundle_album_art_uri,
-        playlist_base_path=playlist_base_path,
+        playlist_path=engine_config.playlist_path,
+        bundle_playlist=engine_config.bundle_playlist,
+        bundle_album_art_uri=engine_config.bundle_album_art_uri,
+        playlist_base_path=engine_config.playlist_base_path,
         ui_callback=enhanced_ui_callback,
         error_recovery=error_recovery,
         enable_error_recovery=True,
         max_processing_retries=3,
         enable_graceful_degradation=True,
-        allow_overwrite=allow_overwrite,
-        lastfm_api_key=lastfm_api_key,
+        allow_overwrite=engine_config.allow_overwrite,
+        lastfm_api_key=engine_config.lastfm_api_key,
     )
     
     # Flush any cached data from previous runs
