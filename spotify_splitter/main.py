@@ -598,6 +598,20 @@ def record(
     ui_state["emergency_expansions"] = 0
     
     processing_thread = threading.Thread(target=manager.run, daemon=True)
+    cleanup_done = False
+
+    def graceful_shutdown() -> None:
+        nonlocal cleanup_done
+        if cleanup_done:
+            return
+
+        logging.info("Processing remaining tracks before shutdown...")
+        manager.shutdown_cleanup()
+        event_queue.put(("shutdown", None))
+        if processing_thread.is_alive():
+            processing_thread.join()
+        manager.flush_cache()
+        cleanup_done = True
 
     # Start metrics collection if enabled
     if metrics_collector:
@@ -738,23 +752,15 @@ def record(
                                 logging.info("Recording timer expired - initiating graceful shutdown")
                                 ui_state["recording_status"] = "Timer expired - stopping recording..."
                                 live.update(create_enhanced_ui())
+                                graceful_shutdown()
                                 break
 
                 except KeyboardInterrupt:
                     raise
                 
     except KeyboardInterrupt:
-        logging.info("Shutdown signal received, processing remaining tracks...")
-        
-        # Perform cleanup - process any remaining tracks
-        manager.shutdown_cleanup()
-        
-        # Signal shutdown to processing thread
-        event_queue.put(("shutdown", None))
-        processing_thread.join()
-        
-        # Final cache flush
-        manager.flush_cache()
+        logging.info("Shutdown signal received")
+        graceful_shutdown()
         
     finally:
         # Stop performance monitoring components

@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # You can register your own free API key at https://www.last.fm/api/account/create
 # This is intentionally left empty - users must configure their own key
 DEFAULT_API_KEY = None
-LASTFM_API_URL = "http://ws.audioscrobbler.com/2.0/"
+LASTFM_API_URL = "https://ws.audioscrobbler.com/2.0/"
 
 
 @dataclass

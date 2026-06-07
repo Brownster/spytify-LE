@@ -252,6 +252,7 @@ class SegmentManager:
         segment = AudioSegment.empty()
         while not self.audio_queue.empty():
             frames = self.audio_queue.get_nowait()
+            frames = np.clip(frames, -1.0, 1.0)
             int_samples = (frames * np.iinfo(np.int16).max).astype(np.int16)
             seg = AudioSegment(
                 int_samples.tobytes(),
@@ -699,17 +700,21 @@ class SegmentManager:
                             if self.bundle_album_art_uri:
                                 # Use custom artwork URL if provided
                                 logger.info("Downloading custom album art for bundle playlist from: %s", self.bundle_album_art_uri)
-                                self.bundle_album_art = requests.get(self.bundle_album_art_uri).content
+                                self.bundle_album_art = requests.get(
+                                    self.bundle_album_art_uri, timeout=10
+                                ).content
                             else:
                                 # Fall back to first track's artwork
                                 logger.info("Downloading first track's album art for bundle playlist")
-                                self.bundle_album_art = requests.get(track_info.art_uri).content
+                                self.bundle_album_art = requests.get(
+                                    track_info.art_uri, timeout=10
+                                ).content
                         # Use the stored unified album art for all tracks
                         img = self.bundle_album_art
                         logger.debug("Using unified album art for bundle track")
                     else:
                         # For non-bundle playlists, download individual track artwork
-                        img = requests.get(track_info.art_uri).content
+                        img = requests.get(track_info.art_uri, timeout=10).content
 
                     audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
                 except Exception as e:

@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -433,7 +434,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                                         pass
 
                             # Clean duplicates
-                            cleaned = line.strip()
+                            cleaned = escape(line.strip())
                             cleaned = cleaned.replace("INFO: INFO:", "INFO:")
                             cleaned = cleaned.replace("INFO INFO:", "INFO:")
 
@@ -476,7 +477,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                                         pass
 
                             # Clean and filter
-                            cleaned = line.strip()
+                            cleaned = escape(line.strip())
                             cleaned = cleaned.replace("INFO: INFO:", "INFO:")
                             cleaned = cleaned.replace("INFO INFO:", "INFO:")
 
@@ -560,6 +561,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             "bundle_playlist": get_bool("bundle_playlist"),
             "bundle_album_art_uri": get_value("bundle_album_art_uri") or None,
             "playlist_base_path": get_value("playlist_base_path") or None,
+            "max_duration": get_value("max_duration") or None,
             "enable_adaptive": get_bool("enable_adaptive"),
             "enable_monitoring": get_bool("enable_monitoring"),
             "enable_metrics": get_bool("enable_metrics"),
@@ -643,6 +645,12 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
         def checked(flag: bool) -> str:
             return "checked" if flag else ""
+
+        def attr(value: object) -> str:
+            return escape(str(value or ""), quote=True)
+
+        def text(value: object) -> str:
+            return escape(str(value or ""))
 
         state = status.get("state", "unknown")
         state_color = {
@@ -1008,7 +1016,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
           <div class="status-indicator"></div>
           <div class="status-text">
             <div><strong>{state}</strong></div>
-            <div class="status-details">{status.get("details", "")}</div>
+            <div class="status-details">{text(status.get("details", ""))}</div>
             <div id="timer-display" class="status-details" style="display: none; margin-top: 0.5rem; font-weight: 600;"></div>
           </div>
         </div>
@@ -1016,7 +1024,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         <form method="post" action="/update" style="margin-bottom: 1rem;">
           <label style="display: block; margin-bottom: 0.5rem;">
             <span style="color: {p["text"]}; font-weight: 500;">⏱️ Recording Timer (Optional)</span>
-            <input type="text" name="max_duration" value="{config.get("max_duration", "")}"
+            <input type="text" name="max_duration" value="{attr(config.get("max_duration", ""))}"
                    placeholder="e.g., 4h29m, 90m, 2h30m"
                    style="width: 100%; padding: 0.75rem; margin-top: 0.5rem; background: {p["bg"]}; border: 1px solid {p["border"]}; border-radius: 6px; color: {p["text"]}; font-size: 0.95rem;" />
             <div class="help-text">Automatically stop recording after specified duration. Leave empty for continuous recording.</div>
@@ -1064,7 +1072,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         <div class="form-grid">
           <label>
             <span>Output Directory</span>
-            <input type="text" name="output" value="{config.get("output", DEFAULT_CONFIG["output"])}" />
+            <input type="text" name="output" value="{attr(config.get("output", DEFAULT_CONFIG["output"]))}" />
             <div class="help-text">Where recorded tracks will be saved</div>
           </label>
 
@@ -1089,7 +1097,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         <div class="form-grid">
           <label>
             <span>LastFM API Key</span>
-            <input type="text" name="lastfm_api_key" value="{config.get("lastfm_api_key", "") or ""}" placeholder="Enter your LastFM API key" />
+            <input type="text" name="lastfm_api_key" value="{attr(config.get("lastfm_api_key", "") or "")}" placeholder="Enter your LastFM API key" />
             <div class="help-text">Required for fetching year and genre tags. <a href="https://www.last.fm/api/account/create" target="_blank" style="color: {p["accent"]};">Get one here</a></div>
           </label>
         </div>
@@ -1098,7 +1106,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         <div class="form-grid">
           <label>
             <span>Playlist File (optional)</span>
-            <input type="text" name="playlist" value="{config.get("playlist", "") or ""}" placeholder="/path/to/playlist.m3u" />
+            <input type="text" name="playlist" value="{attr(config.get("playlist", "") or "")}" placeholder="/path/to/playlist.m3u" />
             <div class="help-text">Generate an M3U playlist file</div>
           </label>
         </div>
@@ -1113,7 +1121,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         <div class="form-group">
           <label>
             <span>Bundle Album Artwork URL (optional)</span>
-            <input type="text" name="bundle_album_art_uri" value="{config.get("bundle_album_art_uri", "") or ""}" placeholder="https://example.com/album-cover.jpg" />
+            <input type="text" name="bundle_album_art_uri" value="{attr(config.get("bundle_album_art_uri", "") or "")}" placeholder="https://example.com/album-cover.jpg" />
             <div class="help-text">Custom album artwork for bundle playlists (uses first track's artwork if not provided)</div>
           </label>
         </div>
@@ -1121,7 +1129,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         <div class="form-group">
           <label>
             <span>M3U Playlist Base Path (optional)</span>
-            <input type="text" name="playlist_base_path" value="{config.get("playlist_base_path", "") or ""}" placeholder="/mnt/storage/music" />
+            <input type="text" name="playlist_base_path" value="{attr(config.get("playlist_base_path", "") or "")}" placeholder="/mnt/storage/music" />
             <div class="help-text">Base path for M3U entries. Maps local recording paths to remote server paths (e.g., recording to ~/Music but listing as /mnt/nas/music in playlist)</div>
           </label>
         </div>
@@ -1168,7 +1176,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
         <label>
           <span>MPRIS Player Name</span>
-          <input type="text" name="player" value="{config.get("player", DEFAULT_CONFIG["player"])}" />
+          <input type="text" name="player" value="{attr(config.get("player", DEFAULT_CONFIG["player"]))}" />
           <div class="help-text">Usually "spotify" for Spotify desktop client</div>
         </label>
 
@@ -1277,7 +1285,7 @@ class Spoti2Service:
 
     def __init__(
         self,
-        host: str = "0.0.0.0",
+        host: str = "127.0.0.1",
         port: int = 8730,
         config_path: Optional[str] = None,
         verbose: bool = False,
@@ -1292,6 +1300,11 @@ class Spoti2Service:
 
     def start(self) -> None:
         logging.info("Starting Spoti2Service (UI on http://%s:%d)", self.host, self.port)
+        if self.host not in {"127.0.0.1", "localhost", "::1"}:
+            logging.warning(
+                "Web UI is bound to %s without authentication; anyone who can reach it can control recording",
+                self.host,
+            )
         self._setup_http_server()
         self.supervisor.start()
         self._http_thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)

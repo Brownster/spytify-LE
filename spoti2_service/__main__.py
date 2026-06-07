@@ -9,8 +9,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="Host/IP for the web UI (default: 0.0.0.0)",
+        default="127.0.0.1",
+        help="Host/IP for the web UI (default: 127.0.0.1)",
     )
     parser.add_argument(
         "--port",
