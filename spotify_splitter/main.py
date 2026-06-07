@@ -876,7 +876,7 @@ def record(
                     publish_status("recording")
 
                 try:
-                    while engine.processing_is_alive():
+                    while engine.is_running():
                         time.sleep(0.1)
                         now = time.monotonic()
 

@@ -122,6 +122,48 @@ def test_engine_creates_and_starts_processing_thread():
     assert not engine.processing_is_alive()
 
 
+def test_engine_running_predicates_track_processing_and_cleanup():
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    release = threading.Event()
+    started = threading.Event()
+
+    def target():
+        started.set()
+        release.wait(timeout=1.0)
+
+    engine.create_processing_thread(manager, target)
+
+    assert engine.is_running() is False
+    assert engine.is_stopped() is False
+
+    engine.start_processing()
+    assert started.wait(timeout=1.0)
+
+    assert engine.is_running() is True
+    assert engine.is_stopped() is False
+
+    release.set()
+    engine.wait_processing(timeout=1.0)
+
+    assert engine.processing_is_alive() is False
+    assert engine.is_running() is False
+    assert engine.is_stopped() is False
+
+
+def test_engine_stopped_predicate_tracks_cleanup():
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    engine.attach_segment_manager(manager, FakeThread())
+
+    assert engine.is_stopped() is False
+
+    engine.stop()
+
+    assert engine.is_stopped() is True
+    assert engine.is_running() is False
+
+
 def test_engine_start_processing_requires_configured_thread():
     engine = RecorderEngine(make_config())
 

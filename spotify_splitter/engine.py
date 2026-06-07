@@ -143,6 +143,13 @@ class RecorderEngine:
     def processing_is_alive(self) -> bool:
         return bool(self._processing_thread and self._processing_thread.is_alive())
 
+    def is_running(self) -> bool:
+        return self.processing_is_alive() and not self.is_stopped()
+
+    def is_stopped(self) -> bool:
+        with self._cleanup_lock:
+            return self._cleanup_done
+
     def wait_processing(self, timeout: Optional[float] = None) -> None:
         if self._processing_thread:
             self._processing_thread.join(timeout=timeout)
