@@ -102,8 +102,8 @@ split, thread ownership, and migration steps.
 **Extraction progress:** `spotify_splitter.engine` now defines domain exceptions,
 `RecorderEngineConfig`, and the first `RecorderEngine` runtime shell. `record()` builds
 the resolved config before constructing the current pipeline, and the engine now owns
-runtime queues, the segment-processing thread lifecycle, and the guarded stop/control
-cleanup path.
+runtime queues, the segment-processing thread lifecycle, the stdin control reader, and
+the guarded stop/control cleanup path.
 
 ---
 
