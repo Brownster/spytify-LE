@@ -99,6 +99,10 @@ remain signal-based until `RecorderEngine` owns cooperative pause state.
 **Design note:** see `docs/pass1-engine-design.md` for the planned engine API, state
 split, thread ownership, and migration steps.
 
+**Extraction progress:** `spotify_splitter.engine` now defines domain exceptions and
+`RecorderEngineConfig`; `record()` builds the resolved config before constructing the
+current pipeline.
+
 ---
 
 ## Pass 2 — Fix the hot path inside the engine (isolated, the reliability win)
