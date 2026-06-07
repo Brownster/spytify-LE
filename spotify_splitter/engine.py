@@ -41,6 +41,7 @@ class SegmentManagerLike(Protocol):
 
 
 StatusPublisher = Callable[[Optional[str]], None]
+ThreadTarget = Callable[[], None]
 
 
 @dataclass(frozen=True)
@@ -122,6 +123,27 @@ class RecorderEngine:
         self._segment_manager = manager
         self._processing_thread = processing_thread
 
+    def create_processing_thread(
+        self,
+        manager: SegmentManagerLike,
+        target: ThreadTarget,
+    ) -> threading.Thread:
+        self._segment_manager = manager
+        self._processing_thread = threading.Thread(target=target, daemon=True)
+        return self._processing_thread
+
+    def start_processing(self) -> None:
+        if not self._processing_thread:
+            raise RecorderError("processing thread has not been configured")
+        self._processing_thread.start()
+
+    def processing_is_alive(self) -> bool:
+        return bool(self._processing_thread and self._processing_thread.is_alive())
+
+    def wait_processing(self, timeout: Optional[float] = None) -> None:
+        if self._processing_thread:
+            self._processing_thread.join(timeout=timeout)
+
     def stop(self, flush: bool = True) -> None:
         with self._cleanup_lock:
             if self._cleanup_done:
@@ -131,8 +153,8 @@ class RecorderEngine:
             if flush and self._segment_manager:
                 self._segment_manager.shutdown_cleanup()
             self.event_queue.put(("shutdown", None))
-            if self._processing_thread and self._processing_thread.is_alive():
-                self._processing_thread.join()
+            if self.processing_is_alive():
+                self.wait_processing()
             if self._segment_manager:
                 self._segment_manager.flush_cache()
             self._cleanup_done = True

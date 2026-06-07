@@ -1,10 +1,16 @@
 """Tests for recorder engine seam types."""
 
 from pathlib import Path
+import threading
 
 import pytest
 
-from spotify_splitter.engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig
+from spotify_splitter.engine import (
+    RecorderConfigError,
+    RecorderEngine,
+    RecorderEngineConfig,
+    RecorderError,
+)
 from spotify_splitter.util import StreamInfo
 
 
@@ -87,7 +93,7 @@ class FakeThread:
     def is_alive(self):
         return True
 
-    def join(self):
+    def join(self, timeout=None):
         self.join_calls += 1
 
 
@@ -96,6 +102,30 @@ def test_engine_creates_runtime_queues_from_config():
 
     assert engine.audio_queue.maxsize == 123
     assert engine.event_queue.empty()
+
+
+def test_engine_creates_and_starts_processing_thread():
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    ran = threading.Event()
+
+    thread = engine.create_processing_thread(manager, ran.set)
+
+    assert thread.daemon is True
+    assert not engine.processing_is_alive()
+
+    engine.start_processing()
+    engine.wait_processing(timeout=1.0)
+
+    assert ran.is_set()
+    assert not engine.processing_is_alive()
+
+
+def test_engine_start_processing_requires_configured_thread():
+    engine = RecorderEngine(make_config())
+
+    with pytest.raises(RecorderError, match="processing thread"):
+        engine.start_processing()
 
 
 def test_engine_stop_flushes_once_and_publishes_status():

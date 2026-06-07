@@ -736,8 +736,7 @@ def record(
     engine.set_status_publisher(publish_status)
     publish_status("waiting")
     
-    processing_thread = threading.Thread(target=manager.run, daemon=True)
-    engine.attach_segment_manager(manager, processing_thread)
+    engine.create_processing_thread(manager, manager.run)
 
     def graceful_shutdown() -> None:
         engine.stop(flush=True)
@@ -846,13 +845,13 @@ def record(
                 live.update(create_enhanced_ui())
 
             with audio_stream:
-                processing_thread.start()
+                engine.start_processing()
                 
                 # Start buffer health monitoring in a separate thread if enabled
                 def monitor_buffer_health():
                     if effective_adaptive and buffer_manager:
                         import time
-                        while processing_thread.is_alive():
+                        while engine.processing_is_alive():
                             try:
                                 metrics = buffer_manager.monitor_utilization(audio_queue)
                                 health = buffer_manager.get_buffer_health(metrics)
@@ -898,7 +897,7 @@ def record(
                     publish_status("recording")
 
                 try:
-                    while processing_thread.is_alive():
+                    while engine.processing_is_alive():
                         time.sleep(0.1)
                         now = time.monotonic()
 
