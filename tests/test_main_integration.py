@@ -235,6 +235,40 @@ class TestMainIntegration:
 
         assert result.exit_code == 0
         mock_manager_instance.shutdown_cleanup.assert_called_once()
+
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.AudioStream')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_normal_processing_exit_flushes_once(
+        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        mock_track_events, mock_get_stream_info
+    ):
+        """Ensure normal loop exit finalizes the active recording once."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_basic_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+        mock_manager_instance.run = Mock(side_effect=lambda: time.sleep(0.05))
+
+        mock_track_events.return_value = None
+
+        result = self.runner.invoke(app, [
+            'record',
+            '--output', self.temp_dir,
+            '--no-adaptive',
+        ])
+
+        assert result.exit_code == 0
+        mock_manager_instance.shutdown_cleanup.assert_called_once()
     
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
