@@ -6,9 +6,12 @@ This module starts with the stable types needed to extract orchestration from
 
 from __future__ import annotations
 
+import logging
+import queue
+import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Protocol
 
 from .util import StreamInfo
 
@@ -27,6 +30,17 @@ class RecorderConfigError(RecorderError):
 
 class RecorderDbusError(RecorderError):
     """Raised when MPRIS/D-Bus setup fails."""
+
+
+class SegmentManagerLike(Protocol):
+    """Subset of SegmentManager used by the engine shutdown path."""
+
+    def shutdown_cleanup(self) -> None: ...
+
+    def flush_cache(self) -> None: ...
+
+
+StatusPublisher = Callable[[Optional[str]], None]
 
 
 @dataclass(frozen=True)
@@ -71,3 +85,71 @@ class RecorderEngineConfig:
             raise RecorderConfigError("max_buffer_size must be greater than or equal to min_buffer_size")
         if self.bundle_playlist and not self.playlist_path:
             raise RecorderConfigError("bundle_playlist requires playlist_path")
+
+
+class RecorderEngine:
+    """Recorder orchestration shell.
+
+    This class intentionally starts as a narrow owner for runtime queues and the
+    shared cleanup/control path. Stream and MPRIS startup move here in follow-up
+    slices.
+    """
+
+    def __init__(
+        self,
+        config: RecorderEngineConfig,
+        status_publisher: Optional[StatusPublisher] = None,
+    ) -> None:
+        self.config = config
+        self.audio_queue: queue.Queue = queue.Queue(maxsize=config.queue_size)
+        self.event_queue: queue.Queue = queue.Queue()
+        self.control_stop_requested = threading.Event()
+
+        self._status_publisher = status_publisher
+        self._segment_manager: Optional[SegmentManagerLike] = None
+        self._processing_thread: Optional[threading.Thread] = None
+        self._cleanup_done = False
+        self._cleanup_lock = threading.Lock()
+
+    def set_status_publisher(self, status_publisher: StatusPublisher) -> None:
+        self._status_publisher = status_publisher
+
+    def attach_segment_manager(
+        self,
+        manager: SegmentManagerLike,
+        processing_thread: threading.Thread,
+    ) -> None:
+        self._segment_manager = manager
+        self._processing_thread = processing_thread
+
+    def stop(self, flush: bool = True) -> None:
+        with self._cleanup_lock:
+            if self._cleanup_done:
+                return
+
+            logging.info("Processing remaining tracks before shutdown...")
+            if flush and self._segment_manager:
+                self._segment_manager.shutdown_cleanup()
+            self.event_queue.put(("shutdown", None))
+            if self._processing_thread and self._processing_thread.is_alive():
+                self._processing_thread.join()
+            if self._segment_manager:
+                self._segment_manager.flush_cache()
+            self._cleanup_done = True
+            self._publish_status("stopped")
+
+    def handle_command(self, command: dict) -> bool:
+        cmd = command.get("cmd")
+        if cmd == "stop":
+            logging.info("Received stdin control command: stop")
+            self._publish_status("stopping")
+            self.stop(flush=bool(command.get("flush", True)))
+            self.control_stop_requested.set()
+            return True
+
+        logging.warning("Ignoring unsupported stdin control command: %s", cmd)
+        return False
+
+    def _publish_status(self, state: str) -> None:
+        if self._status_publisher:
+            self._status_publisher(state)

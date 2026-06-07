@@ -25,7 +25,7 @@ from .metrics_collector import MetricsCollector
 from .performance_dashboard import PerformanceDashboard, DashboardConfig
 from .performance_optimizer import PerformanceOptimizer
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
-from .engine import RecorderConfigError, RecorderEngineConfig
+from .engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
 from .recorder_status import (
@@ -396,9 +396,44 @@ def record(
         # Continue with basic functionality
         pass
 
-    # Create audio queue with adaptive sizing
-    audio_queue: queue.Queue = queue.Queue(maxsize=effective_queue_size)
-    event_queue: queue.Queue = queue.Queue()
+    # Get allow_overwrite and lastfm_api_key from config
+    allow_overwrite = config.get("allow_overwrite", False)
+    lastfm_api_key = config.get("lastfm_api_key")
+
+    try:
+        engine_config = RecorderEngineConfig(
+            stream_info=info,
+            output_dir=Path(out_dir) if out_dir else OUTPUT_DIR,
+            fmt=fmt,
+            player=player,
+            dump_metadata=dump_metadata,
+            queue_size=effective_queue_size,
+            blocksize=effective_blocksize,
+            latency=effective_latency,
+            enable_adaptive=effective_adaptive,
+            enable_monitoring=effective_monitoring,
+            enable_metrics=effective_metrics,
+            debug_mode=effective_debug,
+            min_buffer_size=min_buffer_size,
+            max_buffer_size=max_buffer_size,
+            playlist_path=playlist_path,
+            bundle_playlist=bundle_playlist,
+            bundle_album_art_uri=bundle_album_art_uri,
+            playlist_base_path=playlist_base_path,
+            max_duration=max_duration,
+            timer_duration_seconds=timer_duration if max_duration else None,
+            allow_overwrite=allow_overwrite,
+            lastfm_api_key=lastfm_api_key,
+            status_file=Path(status_file) if status_file else None,
+            control_stdin=control_stdin,
+        )
+    except RecorderConfigError as e:
+        logging.error(f"Invalid recorder configuration: {e}")
+        raise typer.Exit(code=1)
+
+    engine = RecorderEngine(engine_config)
+    audio_queue = engine.audio_queue
+    event_queue = engine.event_queue
 
     # Enhanced UI state with adaptive buffer information
     ui_state = {
@@ -652,41 +687,6 @@ def record(
         
         live.update(create_enhanced_ui())
 
-    # Get allow_overwrite and lastfm_api_key from config
-    allow_overwrite = config.get("allow_overwrite", False)
-    lastfm_api_key = config.get("lastfm_api_key")
-
-    try:
-        engine_config = RecorderEngineConfig(
-            stream_info=info,
-            output_dir=Path(out_dir) if out_dir else OUTPUT_DIR,
-            fmt=fmt,
-            player=player,
-            dump_metadata=dump_metadata,
-            queue_size=effective_queue_size,
-            blocksize=effective_blocksize,
-            latency=effective_latency,
-            enable_adaptive=effective_adaptive,
-            enable_monitoring=effective_monitoring,
-            enable_metrics=effective_metrics,
-            debug_mode=effective_debug,
-            min_buffer_size=min_buffer_size,
-            max_buffer_size=max_buffer_size,
-            playlist_path=playlist_path,
-            bundle_playlist=bundle_playlist,
-            bundle_album_art_uri=bundle_album_art_uri,
-            playlist_base_path=playlist_base_path,
-            max_duration=max_duration,
-            timer_duration_seconds=timer_duration if max_duration else None,
-            allow_overwrite=allow_overwrite,
-            lastfm_api_key=lastfm_api_key,
-            status_file=Path(status_file) if status_file else None,
-            control_stdin=control_stdin,
-        )
-    except RecorderConfigError as e:
-        logging.error(f"Invalid recorder configuration: {e}")
-        raise typer.Exit(code=1)
-
     manager = SegmentManager(
         samplerate=info.samplerate,
         output_dir=engine_config.output_dir,
@@ -733,40 +733,20 @@ def record(
     ui_state["buffer_warnings"] = 0
     ui_state["adaptive_adjustments"] = 0
     ui_state["emergency_expansions"] = 0
+    engine.set_status_publisher(publish_status)
     publish_status("waiting")
     
     processing_thread = threading.Thread(target=manager.run, daemon=True)
-    cleanup_done = False
-    cleanup_lock = threading.Lock()
-    control_stop_requested = threading.Event()
+    engine.attach_segment_manager(manager, processing_thread)
 
     def graceful_shutdown() -> None:
-        nonlocal cleanup_done
-        with cleanup_lock:
-            if cleanup_done:
-                return
-
-            logging.info("Processing remaining tracks before shutdown...")
-            manager.shutdown_cleanup()
-            event_queue.put(("shutdown", None))
-            if processing_thread.is_alive():
-                processing_thread.join()
-            manager.flush_cache()
-            cleanup_done = True
-            publish_status("stopped")
+        engine.stop(flush=True)
 
     def handle_control_command(command: dict) -> bool:
         cmd = command.get("cmd")
         if cmd == "stop":
-            logging.info("Received stdin control command: stop")
             ui_state["recording_status"] = "Stop requested - finalizing recording..."
-            publish_status("stopping")
-            graceful_shutdown()
-            control_stop_requested.set()
-            return True
-        else:
-            logging.warning("Ignoring unsupported stdin control command: %s", cmd)
-            return False
+        return engine.handle_command(command)
 
     def read_control_stdin() -> None:
         for line in sys.stdin:
@@ -922,7 +902,7 @@ def record(
                         time.sleep(0.1)
                         now = time.monotonic()
 
-                        if control_stop_requested.is_set():
+                        if engine.control_stop_requested.is_set():
                             break
 
                         if status_writer and now - last_status_heartbeat >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
