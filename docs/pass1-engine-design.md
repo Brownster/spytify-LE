@@ -38,7 +38,8 @@ class RecorderEngine:
 
 Initial semantics:
 
-- `start()` creates queues, stream, `SegmentManager`, and worker threads, then returns.
+- `start()` creates queues, stream, `SegmentManager`, and worker threads, launches
+  them, and returns. It is always non-blocking.
 - `wait()` blocks until the engine stops.
 - `run()` is a convenience wrapper for subprocess/headless use: `start()` then `wait()`.
 - `stop(flush=True)` routes through the single guarded cleanup path. With `flush=True`,
@@ -83,17 +84,21 @@ The engine emits semantic events such as `track_change`, `playback_status`,
 
 ## Loop And Render Model
 
-The engine owns lifecycle, timer expiry, status heartbeat, and shutdown decisions. It
-emits events when those facts change, including a periodic `tick` event for status/timer
-refresh.
+The engine is non-blocking. It owns recorder lifecycle, timer expiry, status heartbeat,
+and shutdown decisions, but it does not own display cadence. `start()` launches engine
+threads and returns; `wait()` and `run()` are the only blocking calls.
+
+The engine emits events when recorder facts change, including a periodic `tick` event
+for status/timer refresh. Timer expiry is handled inside the engine and results in the
+same guarded `stop(flush=True)` path as stdin stop and KeyboardInterrupt.
 
 The CLI owns Rich `Live` cadence and rendering. The interactive CLI should call
 `engine.start()`, run its `Live` loop while polling `engine.status()` or reacting to
 engine events, then call `engine.wait()` when stopping. The subprocess entrypoint can
 use `engine.run()` when no interactive render loop is needed.
 
-This keeps display timing out of the engine while avoiding duplicated lifecycle/timer
-logic in each frontend.
+This keeps display timing out of the engine while avoiding duplicated lifecycle,
+heartbeat, and timer logic in each frontend.
 
 ## Errors And Exit Codes
 
@@ -133,7 +138,7 @@ Shutdown is engine-internal:
 - one `cleanup_lock`
 - one `cleanup_done` guard
 - all stop paths call `RecorderEngine.stop(flush=True)`
-- timer expiry, stdin stop, and final cleanup share the same method
+- timer expiry, stdin stop, normal loop exit, and final cleanup share the same method
 - the CLI wrapper catches `KeyboardInterrupt` around `engine.start()`/`engine.wait()`
   or `engine.run()` and calls `engine.stop(flush=True)`
 
