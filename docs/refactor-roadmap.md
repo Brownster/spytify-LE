@@ -96,6 +96,9 @@ web-service `/status` now consumes it with supervisor-owned lifecycle state. Eng
 extraction remains open. Stdin NDJSON control is wired for graceful stop; pause/resume
 remain signal-based until `RecorderEngine` owns cooperative pause state.
 
+**Design note:** see `docs/pass1-engine-design.md` for the planned engine API, state
+split, thread ownership, and migration steps.
+
 ---
 
 ## Pass 2 — Fix the hot path inside the engine (isolated, the reliability win)
