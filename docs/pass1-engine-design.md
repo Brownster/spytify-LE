@@ -27,6 +27,8 @@ Create `spotify_splitter/engine.py` with a small control API:
 ```python
 class RecorderEngine:
     def start(self) -> None: ...
+    def wait(self) -> None: ...
+    def run(self) -> None: ...
     def stop(self, flush: bool = True) -> None: ...
     def pause(self) -> None: ...
     def resume(self) -> None: ...
@@ -36,8 +38,9 @@ class RecorderEngine:
 
 Initial semantics:
 
-- `start()` creates queues, stream, `SegmentManager`, and worker threads, then blocks
-  until stopped. This preserves the current CLI behaviour.
+- `start()` creates queues, stream, `SegmentManager`, and worker threads, then returns.
+- `wait()` blocks until the engine stops.
+- `run()` is a convenience wrapper for subprocess/headless use: `start()` then `wait()`.
 - `stop(flush=True)` routes through the single guarded cleanup path. With `flush=True`,
   it runs `SegmentManager.shutdown_cleanup()`, sends `("shutdown", None)`, joins the
   processing thread, and flushes cache.
@@ -78,6 +81,40 @@ EngineEvent = Callable[[str, object], None]
 The engine emits semantic events such as `track_change`, `playback_status`,
 `processing`, `saved`, `buffer_warning`, and `error`. The CLI maps those to its Rich UI.
 
+## Loop And Render Model
+
+The engine owns lifecycle, timer expiry, status heartbeat, and shutdown decisions. It
+emits events when those facts change, including a periodic `tick` event for status/timer
+refresh.
+
+The CLI owns Rich `Live` cadence and rendering. The interactive CLI should call
+`engine.start()`, run its `Live` loop while polling `engine.status()` or reacting to
+engine events, then call `engine.wait()` when stopping. The subprocess entrypoint can
+use `engine.run()` when no interactive render loop is needed.
+
+This keeps display timing out of the engine while avoiding duplicated lifecycle/timer
+logic in each frontend.
+
+## Errors And Exit Codes
+
+The engine must not raise `typer.Exit`. It raises plain domain exceptions instead:
+
+```python
+class RecorderError(Exception): ...
+class StreamNotFoundError(RecorderError): ...
+class RecorderConfigError(RecorderError): ...
+class RecorderDbusError(RecorderError): ...
+```
+
+`main.record()` maps those exceptions to user-facing log messages and exit codes. The
+current service semantics must be preserved: early exit with code `1` still means
+"Spotify client not ready or no playback detected" to the supervisor when runtime is
+less than 8 seconds.
+
+Bad CLI-only input such as an invalid `--max-duration` can remain validated in
+`main.record()` before constructing the engine, but any engine-level config validation
+should use `RecorderConfigError`.
+
 ## Thread Ownership
 
 `RecorderEngine` owns and joins:
@@ -96,7 +133,20 @@ Shutdown is engine-internal:
 - one `cleanup_lock`
 - one `cleanup_done` guard
 - all stop paths call `RecorderEngine.stop(flush=True)`
-- timer expiry, stdin stop, Ctrl-C, and final cleanup share the same method
+- timer expiry, stdin stop, and final cleanup share the same method
+- the CLI wrapper catches `KeyboardInterrupt` around `engine.start()`/`engine.wait()`
+  or `engine.run()` and calls `engine.stop(flush=True)`
+
+Engine shutdown also owns the non-thread cleanup that currently lives in
+`main.record()`:
+
+- stop metrics collection
+- stop dashboard/optimizer components
+- close the playlist via `SegmentManager.close_playlist()`
+- call `tag_output(...)` after recording stops
+
+The CLI remains responsible for presenting final messages and mapping exceptions to
+exit codes.
 
 ## Status File
 
@@ -118,9 +168,14 @@ The service stale threshold remains 15 seconds, a 3x heartbeat window.
    thread startup into `RecorderEngine`.
 3. Move `publish_status()`, stdin command handling, heartbeat, and guarded cleanup into
    `RecorderEngine`.
-4. Keep `main.record()` responsible for Typer parsing, config/profile resolution, Rich
-   UI construction, and translating engine events to display updates.
-5. Preserve existing service subprocess behaviour. It should keep using
+4. Move timer expiry handling into `RecorderEngine`; keep timer display formatting in
+   the CLI.
+5. Move metrics/dashboard/optimizer shutdown, playlist close, and post-run
+   `tag_output(...)` into engine shutdown.
+6. Keep `main.record()` responsible for Typer parsing, config/profile resolution, Rich
+   UI construction, KeyboardInterrupt handling, exit-code mapping, and translating
+   engine events to display updates.
+7. Preserve existing service subprocess behaviour. It should keep using
    `--status-file` and `--control-stdin`.
 
 ## Acceptance
