@@ -28,6 +28,8 @@ class TestMainIntegration:
         """Set up test fixtures."""
         self.runner = CliRunner()
         self.temp_dir = tempfile.mkdtemp()
+        self._old_xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+        os.environ["XDG_CONFIG_HOME"] = self.temp_dir
         
         # Mock stream info
         self.mock_stream_info = StreamInfo(
@@ -39,6 +41,10 @@ class TestMainIntegration:
     def teardown_method(self):
         """Clean up test fixtures."""
         import shutil
+        if self._old_xdg_config_home is None:
+            os.environ.pop("XDG_CONFIG_HOME", None)
+        else:
+            os.environ["XDG_CONFIG_HOME"] = self._old_xdg_config_home
         shutil.rmtree(self.temp_dir, ignore_errors=True)
     
     @patch('spotify_splitter.main.get_spotify_stream_info')

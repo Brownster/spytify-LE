@@ -54,18 +54,21 @@ cd spoti2
 sudo apt-get update
 sudo apt-get install python3-gi python3-pyaudio ffmpeg
 
-# Allow Poetry venv to access system packages
-poetry config virtualenvs.options.system-site-packages true
-
 # Create the venv and install Python deps
-poetry env use python3.12
-poetry install
+uv venv --python 3.11
+uv pip install -r requirements-dev.txt
 ```
 
 Run the tests with:
 
 ```bash
-poetry run pytest
+.venv/bin/pytest
+```
+
+For day-to-day work on the refactor, start with a focused smoke set:
+
+```bash
+.venv/bin/pytest tests/test_duration_parser.py tests/test_cli.py tests/test_segmenter.py tests/test_util.py
 ```
 
 ## Contributing
@@ -73,7 +76,7 @@ poetry run pytest
 1. Open an issue to discuss your idea or bug fix.
 2. Fork the repo and create a branch for your change.
 3. Add or update tests where appropriate.
-4. Ensure `poetry run pytest` passes.
+4. Ensure `.venv/bin/pytest` passes.
 5. Open a pull request linking to your issue.
 
 Thank you for helping improve Spotify Splitter!

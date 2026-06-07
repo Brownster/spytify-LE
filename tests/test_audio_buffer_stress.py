@@ -16,6 +16,8 @@ from unittest.mock import Mock, patch, MagicMock
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import gc
 import psutil
+
+pytestmark = pytest.mark.slow
 import os
 
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferMetrics, HealthStatus

@@ -94,6 +94,16 @@ def main_callback(
 @app.command()
 def record(
     ctx: typer.Context,
+    output: Optional[str] = typer.Option(
+        None,
+        "--output",
+        help="Directory to save tracks (also accepted as a global option)",
+    ),
+    format: Optional[str] = typer.Option(
+        None,
+        "--format",
+        help="Output format: mp3, flac, etc. (also accepted as a global option)",
+    ),
     dump_metadata: bool = typer.Option(
         False,
         "--dump-metadata",
@@ -103,6 +113,11 @@ def record(
         "spotify",
         "--player",
         help="The MPRIS player name (usually 'spotify' for Spotify desktop).",
+    ),
+    spotifyd_mode: bool = typer.Option(
+        False,
+        "--spotifyd-mode",
+        help="Use spotifyd/headless defaults (player=spotifyd, profile=headless unless overridden).",
     ),
     queue_size: int = typer.Option(
         None,
@@ -183,6 +198,11 @@ def record(
     """Start recording until interrupted."""
     config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
 
+    if output:
+        ctx.obj["output"] = str(Path(output).expanduser())
+    if format:
+        ctx.obj["format"] = format
+
     def resolve_param(name: str, current_value, config_key: Optional[str] = None):
         """Prefer CLI value when explicitly provided, otherwise fall back to config."""
         key = config_key or name
@@ -193,6 +213,7 @@ def record(
 
     dump_metadata = resolve_param("dump_metadata", dump_metadata)
     player = resolve_param("player", player)
+    spotifyd_mode = resolve_param("spotifyd_mode", spotifyd_mode)
     queue_size = resolve_param("queue_size", queue_size)
     blocksize = resolve_param("blocksize", blocksize)
     latency = resolve_param("latency", latency)
@@ -208,6 +229,11 @@ def record(
     bundle_album_art_uri = resolve_param("bundle_album_art_uri", bundle_album_art_uri)
     playlist_base_path = resolve_param("playlist_base_path", playlist_base_path)
     max_duration = resolve_param("max_duration", max_duration)
+
+    if spotifyd_mode:
+        player = "spotifyd"
+        if profile == "auto":
+            profile = "headless"
 
     # Validate max_duration format if provided
     if max_duration:
@@ -763,6 +789,12 @@ def record(
         graceful_shutdown()
         
     finally:
+        if 'manager' in locals():
+            try:
+                graceful_shutdown()
+            except Exception as e:
+                logging.debug(f"Error during shutdown cleanup: {e}")
+
         # Stop performance monitoring components
         if performance_optimizer:
             try:

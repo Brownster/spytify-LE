@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 import json
 
+pytestmark = pytest.mark.slow
+
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferMetrics, HealthStatus
 from spotify_splitter.audio import EnhancedAudioStream
 from spotify_splitter.config_profiles import ProfileManager, ProfileType

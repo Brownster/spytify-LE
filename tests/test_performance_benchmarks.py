@@ -16,6 +16,8 @@ from unittest.mock import Mock, patch, MagicMock
 import tempfile
 import json
 
+pytestmark = pytest.mark.slow
+
 from spotify_splitter.metrics_collector import MetricsCollector, DiagnosticLevel
 from spotify_splitter.performance_dashboard import PerformanceDashboard, DashboardConfig
 from spotify_splitter.performance_optimizer import PerformanceOptimizer, OptimizationType, OptimizationPriority

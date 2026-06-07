@@ -16,6 +16,8 @@ import os
 from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock
 from dataclasses import dataclass
+
+pytestmark = pytest.mark.slow
 from typing import Dict, List, Optional, Tuple
 import json
 import tempfile

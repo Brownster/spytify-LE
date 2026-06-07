@@ -54,10 +54,13 @@ flowchart LR
 those seams. We must see what breaks and why. Bare `pytest` currently fails (system
 Python 3.14, no numpy).
 
-- [ ] Pin a dev environment (Poetry against 3.12, or `.venv` + `requirements.txt`).
-- [ ] `pytest -m "not slow"` green; document the command in `docs/developer-guide.md`.
+- [x] Pin a dev environment (`uv` + Python 3.11 + `requirements-dev.txt`).
+- [x] `pytest -m "not slow"` green; document the command in `docs/developer-guide.md`.
 - [ ] Make collection resilient: skip (not error) when `numpy`/`sounddevice` are absent, so partial envs degrade gracefully.
 - [ ] CI runs the fast suite on 3.10–3.12.
+
+**Local baseline:** `.venv/bin/pytest -m "not slow"` passes
+(`297 passed, 28 deselected` in 38.50s on Python 3.11.14 / pytest 8.4.1).
 
 **Acceptance:** a documented one-liner runs the suite green locally and in CI.
 

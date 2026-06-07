@@ -22,6 +22,7 @@ TrackInfo = namedtuple(
     "TrackInfo",
     "artist title album art_uri id track_number position duration_ms year genre",
 )
+TrackInfo.__new__.__defaults__ = (None, None)
 
 logger = logging.getLogger(__name__)
 
