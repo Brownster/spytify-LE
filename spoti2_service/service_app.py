@@ -6,11 +6,12 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from urllib.parse import parse_qs
 
 from spotify_splitter.user_config import (
@@ -24,6 +25,8 @@ from spotify_splitter.user_config import (
 LOG_DIR = Path.home() / ".cache" / "spotify_splitter" / "service"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "service.log"
+RECORDER_LOG_PATH = LOG_DIR / "recorder.log"
+RECORDER_STATUS_PATH = LOG_DIR / "status.json"
 
 
 def configure_logging(verbose: bool = False) -> None:
@@ -48,10 +51,12 @@ class RecorderSupervisor:
         config_path: Optional[str] = None,
         auto_restart_delay: float = 15.0,
         disable_metrics: bool = True,
+        status_path: Path = RECORDER_STATUS_PATH,
     ) -> None:
         self.config_path = config_path
         self.auto_restart_delay = auto_restart_delay
         self.disable_metrics = disable_metrics
+        self.status_path = status_path
 
         self._process: Optional[subprocess.Popen[str]] = None
         self._thread: Optional[threading.Thread] = None
@@ -137,9 +142,10 @@ class RecorderSupervisor:
         self._terminate_process()
         self._set_status("restarting", reason)
 
-    def status(self) -> Dict[str, str]:
+    def status(self) -> Dict[str, Any]:
         with self._status_lock:
-            return dict(self._status)
+            supervisor_status = dict(self._status)
+        return self._merge_recorder_status(supervisor_status)
 
     def set_verbose_logging(self, enabled: bool) -> None:
         """Toggle verbose logging mode."""
@@ -157,6 +163,86 @@ class RecorderSupervisor:
             self._status["details"] = details
             if current_track:
                 self._status["current_track"] = current_track
+
+    def _read_recorder_status(self) -> Optional[Dict[str, Any]]:
+        try:
+            with self.status_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            return None
+        except Exception as e:
+            logging.debug("Failed to read recorder status file: %s", e)
+            return None
+        if not isinstance(data, dict):
+            return None
+        return data
+
+    def _is_recorder_status_current(self, recorder_status: Dict[str, Any]) -> bool:
+        if not self._process or self._process.poll() is not None:
+            return False
+
+        pid = recorder_status.get("pid")
+        if pid and pid != self._process.pid:
+            return False
+
+        # A paused process cannot update the status file while SIGSTOP'd, so pid
+        # is the freshness check for paused state.
+        if self._pause_event.is_set():
+            return True
+
+        updated_at = recorder_status.get("updated_at")
+        if not updated_at:
+            return True
+        try:
+            timestamp = updated_at.replace("Z", "+00:00")
+            updated = datetime.fromisoformat(timestamp)
+            if updated.tzinfo is None:
+                updated = updated.replace(tzinfo=timezone.utc)
+        except Exception:
+            return True
+        return (datetime.now(timezone.utc) - updated).total_seconds() <= 15.0
+
+    def _merge_recorder_status(self, supervisor_status: Dict[str, Any]) -> Dict[str, Any]:
+        recorder_status = self._read_recorder_status()
+        if not recorder_status:
+            return supervisor_status
+
+        merged = dict(supervisor_status)
+        is_current = self._is_recorder_status_current(recorder_status)
+        merged["recorder_status_stale"] = not is_current
+        if not is_current:
+            return merged
+
+        current_track = recorder_status.get("current_track")
+        if isinstance(current_track, dict):
+            artist = current_track.get("artist") or ""
+            title = current_track.get("title") or ""
+            track_label = " - ".join(part for part in [artist, title] if part)
+            if track_label:
+                merged["current_track"] = track_label
+                if merged.get("state") == "running":
+                    merged["details"] = f"🎵 Recording: {track_label}"
+
+        merged["tracks_recorded"] = recorder_status.get("tracks_recorded", 0)
+        merged["recorder_state"] = recorder_status.get("state")
+        merged["last_error"] = recorder_status.get("last_error")
+        merged["updated_at"] = recorder_status.get("updated_at")
+
+        timer = recorder_status.get("timer")
+        if isinstance(timer, dict):
+            merged["timer"] = timer
+            merged["timer_enabled"] = bool(timer.get("enabled"))
+            merged["timer_elapsed_seconds"] = int(timer.get("elapsed_seconds") or 0)
+            merged["timer_remaining_seconds"] = int(timer.get("remaining_seconds") or 0)
+
+        audio = recorder_status.get("audio")
+        if isinstance(audio, dict):
+            merged["audio"] = audio
+            merged["queue_depth"] = int(audio.get("queue_depth") or 0)
+            merged["dropped_frames"] = int(audio.get("dropped_frames") or 0)
+            merged["buffer_warnings"] = int(audio.get("buffer_warnings") or 0)
+
+        return merged
 
     def _terminate_process(self) -> None:
         if not self._process:
@@ -215,6 +301,7 @@ class RecorderSupervisor:
                 record_args.extend(["--playlist-base-path", config["playlist_base_path"]])
         if config.get("max_duration"):
             record_args.extend(["--max-duration", config["max_duration"]])
+        record_args.extend(["--status-file", str(self.status_path)])
 
         cmd.append("record")
         cmd.extend(record_args)
@@ -231,7 +318,9 @@ class RecorderSupervisor:
             env.setdefault("RICH_FORCE_TERMINAL", "0")
             env.setdefault("TERM", "dumb")
 
-            log_path = LOG_DIR / "recorder.log"
+            log_path = RECORDER_LOG_PATH
+            self.status_path.parent.mkdir(parents=True, exist_ok=True)
+            self.status_path.unlink(missing_ok=True)
             stdout_file = log_path.open("a", encoding="utf-8")
             self._set_status("starting", "⏳ Starting recorder...")
             logging.info("Starting spotify-splitter: %s", " ".join(command))
@@ -403,10 +492,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                     lines = f.readlines()
                     recent_logs = lines[-200:] if len(lines) > 200 else lines
 
-                    # Track change detection for status updates
-                    track_change_keywords = ["TRACK CHANGE CALLBACK:", "Track changed:"]
-                    last_track = None
-
                     if verbose:
                         # Verbose mode: show more log events
                         verbose_keywords = [
@@ -423,16 +508,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
                         filtered_lines = []
                         for line in recent_logs:
-                            # Extract current track
-                            for keyword in track_change_keywords:
-                                if keyword in line:
-                                    try:
-                                        parts = line.split(keyword)
-                                        if len(parts) > 1:
-                                            last_track = parts[1].strip()
-                                    except:
-                                        pass
-
                             # Clean duplicates
                             cleaned = escape(line.strip())
                             cleaned = cleaned.replace("INFO: INFO:", "INFO:")
@@ -466,16 +541,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
                         filtered_lines = []
                         for line in recent_logs:
-                            # Extract current track
-                            for keyword in track_change_keywords:
-                                if keyword in line:
-                                    try:
-                                        parts = line.split(keyword)
-                                        if len(parts) > 1:
-                                            last_track = parts[1].strip()
-                                    except:
-                                        pass
-
                             # Clean and filter
                             cleaned = escape(line.strip())
                             cleaned = cleaned.replace("INFO: INFO:", "INFO:")
@@ -500,15 +565,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
 
                         # Reverse so newest entries appear at top
                         logs = "\n".join(reversed(filtered_lines[-30:])) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
-
-                    # Update status if we detected a track change
-                    if last_track and self.server.app.supervisor._process:
-                        status = self.server.app.supervisor.status()
-                        if status.get("state") == "running":
-                            self.server.app.supervisor._set_status(
-                                "running",
-                                f"🎵 Recording: {last_track}"
-                            )
             else:
                 logs = "No logs available - recorder not started"
 
@@ -1013,10 +1069,10 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
       <div class="panel">
         <h2>Recording Status</h2>
         <div class="status-display">
-          <div class="status-indicator"></div>
+          <div id="status-indicator" class="status-indicator"></div>
           <div class="status-text">
-            <div><strong>{state}</strong></div>
-            <div class="status-details">{text(status.get("details", ""))}</div>
+            <div><strong id="status-state">{state}</strong></div>
+            <div id="status-details" class="status-details">{text(status.get("details", ""))}</div>
             <div id="timer-display" class="status-details" style="display: none; margin-top: 0.5rem; font-weight: 600;"></div>
           </div>
         </div>
@@ -1240,6 +1296,27 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         .then(response => response.json())
         .then(data => {{
           const timerDisplay = document.getElementById('timer-display');
+          const stateText = document.getElementById('status-state');
+          const detailsText = document.getElementById('status-details');
+          const indicator = document.getElementById('status-indicator');
+
+          if (stateText && data.state) {{
+            stateText.textContent = data.state;
+          }}
+          if (detailsText) {{
+            detailsText.textContent = data.details || '';
+          }}
+          if (indicator && data.state) {{
+            const colors = {{
+              running: '{p["success"]}',
+              starting: '{p["warning"]}',
+              stopped: '{p["text_muted"]}',
+              paused: '{p["warning"]}',
+              waiting: '{p["warning"]}',
+              error: '{p["error"]}'
+            }};
+            indicator.style.background = colors[data.state] || '{p["text"]}';
+          }}
 
           // Update timer display if timer is enabled
           if (data.timer_enabled) {{

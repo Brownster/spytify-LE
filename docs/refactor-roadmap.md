@@ -92,7 +92,8 @@ the new seams, green.
 
 **Progress:** `spotify_splitter.recorder_status` defines the schema and atomic JSON
 writer. The current `record` command can write it with `--status-file`; engine and
-web-service wiring remains open.
+web-service `/status` now consumes it with supervisor-owned lifecycle state. Engine
+extraction and stdin control remain open.
 
 ---
 
