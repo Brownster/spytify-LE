@@ -200,6 +200,41 @@ class TestMainIntegration:
         assert mock_basic_stream.called
         assert mock_enhanced_stream.call_count == 0
         assert write_states.count("waiting") >= 2
+
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.AudioStream')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_control_stdin_stop_flushes(
+        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        mock_track_events, mock_get_stream_info
+    ):
+        """Ensure stdin stop control uses the graceful shutdown path."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_basic_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+        mock_manager_instance.run = Mock(side_effect=lambda: time.sleep(0.2))
+
+        mock_track_events.return_value = None
+
+        result = self.runner.invoke(app, [
+            'record',
+            '--output', self.temp_dir,
+            '--no-adaptive',
+            '--control-stdin',
+        ], input='{"cmd":"stop","flush":true}\n')
+
+        assert result.exit_code == 0
+        mock_manager_instance.shutdown_cleanup.assert_called_once()
     
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')

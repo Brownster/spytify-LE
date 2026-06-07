@@ -1,6 +1,7 @@
 """Tests for the web service recorder supervisor."""
 
 from datetime import datetime, timedelta, timezone
+import io
 import json
 from pathlib import Path
 
@@ -15,6 +16,26 @@ class FakeProcess:
 
     def poll(self):
         return self.exit_code
+
+
+class ControlledProcess(FakeProcess):
+    def __init__(self, pid: int = 1234):
+        super().__init__(pid=pid, exit_code=None)
+        self.stdin = io.StringIO()
+        self.terminated = False
+        self.killed = False
+
+    def wait(self, timeout=None):
+        self.exit_code = 0
+        return 0
+
+    def terminate(self):
+        self.terminated = True
+        self.exit_code = 143
+
+    def kill(self):
+        self.killed = True
+        self.exit_code = 137
 
 
 def write_status(path: Path, **overrides):
@@ -55,7 +76,25 @@ def test_build_command_passes_status_file(tmp_path):
 
     assert "--status-file" in command
     assert command[command.index("--status-file") + 1] == str(status_path)
-    assert command[-3:] == ["record", "--status-file", str(status_path)]
+    assert command[-4:] == ["record", "--status-file", str(status_path), "--control-stdin"]
+
+
+def test_stop_sends_graceful_control_command(tmp_path):
+    supervisor = RecorderSupervisor(
+        status_path=tmp_path / "status.json",
+        graceful_stop_timeout=0.1,
+    )
+    process = ControlledProcess()
+    supervisor._process = process
+    supervisor._set_status("running", "Recording")
+
+    supervisor.stop()
+
+    command = json.loads(process.stdin.getvalue().strip())
+    assert command == {"cmd": "stop", "flush": True}
+    assert process.terminated is False
+    assert process.killed is False
+    assert supervisor.status()["state"] == "stopped"
 
 
 def test_status_without_file_returns_supervisor_state(tmp_path):

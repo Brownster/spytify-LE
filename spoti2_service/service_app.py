@@ -53,11 +53,13 @@ class RecorderSupervisor:
         auto_restart_delay: float = 15.0,
         disable_metrics: bool = True,
         status_path: Path = RECORDER_STATUS_PATH,
+        graceful_stop_timeout: float = 20.0,
     ) -> None:
         self.config_path = config_path
         self.auto_restart_delay = auto_restart_delay
         self.disable_metrics = disable_metrics
         self.status_path = status_path
+        self.graceful_stop_timeout = graceful_stop_timeout
 
         self._process: Optional[subprocess.Popen[str]] = None
         self._thread: Optional[threading.Thread] = None
@@ -103,9 +105,13 @@ class RecorderSupervisor:
         """Stop recording (user-initiated)."""
         logging.info("Stopping RecorderSupervisor (manual stop)")
         self._manual_stop = True
+        self._pause_event.clear()
+        proc = self._process
+        if proc and proc.poll() is None and self._request_graceful_stop():
+            self._set_status("stopped", "⏹️ Recording stopped")
+            return
         self._stop_event.set()
         self._restart_event.set()
-        self._pause_event.clear()
         self._terminate_process()
         self._set_status("stopped", "⏹️ Recording stopped")
 
@@ -260,6 +266,38 @@ class RecorderSupervisor:
         finally:
             self._process = None
 
+    def _send_control_command(self, command: Dict[str, Any]) -> bool:
+        proc = self._process
+        if not proc or proc.poll() is not None or not proc.stdin:
+            return False
+        try:
+            proc.stdin.write(json.dumps(command) + "\n")
+            proc.stdin.flush()
+            return True
+        except Exception as e:
+            logging.warning("Failed to send recorder control command: %s", e)
+            return False
+
+    def _request_graceful_stop(self) -> bool:
+        proc = self._process
+        if not proc or proc.poll() is not None:
+            return True
+
+        logging.info("Requesting graceful recorder stop (pid=%s)", proc.pid)
+        self._set_status("stopping", "Finalizing recording...")
+        if not self._send_control_command({"cmd": "stop", "flush": True}):
+            return False
+        try:
+            proc.wait(timeout=self.graceful_stop_timeout)
+            logging.info("Recorder exited after graceful stop request")
+            return True
+        except subprocess.TimeoutExpired:
+            logging.warning(
+                "Recorder did not exit within %.1fs after graceful stop request",
+                self.graceful_stop_timeout,
+            )
+            return False
+
     def _build_command(self, config: Dict[str, str]) -> list[str]:
         python_exec = sys.executable
         cmd = [
@@ -304,6 +342,7 @@ class RecorderSupervisor:
         if config.get("max_duration"):
             record_args.extend(["--max-duration", config["max_duration"]])
         record_args.extend(["--status-file", str(self.status_path)])
+        record_args.append("--control-stdin")
 
         cmd.append("record")
         cmd.extend(record_args)
@@ -330,9 +369,11 @@ class RecorderSupervisor:
             try:
                 self._process = subprocess.Popen(
                     command,
+                    stdin=subprocess.PIPE,
                     stdout=stdout_file,
                     stderr=subprocess.STDOUT,
                     env=env,
+                    text=True,
                 )
             except FileNotFoundError:
                 stdout_file.close()

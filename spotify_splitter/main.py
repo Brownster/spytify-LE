@@ -1,6 +1,8 @@
 import threading
 import logging
 import os
+import json
+import sys
 from pathlib import Path
 from typing import Optional
 import typer
@@ -208,6 +210,11 @@ def record(
         "--status-file",
         help="Write structured recorder status to this JSON file using atomic replace.",
     ),
+    control_stdin: bool = typer.Option(
+        False,
+        "--control-stdin",
+        help="Read newline-delimited JSON control commands from stdin.",
+    ),
 ):
     """Start recording until interrupted."""
     config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
@@ -244,6 +251,7 @@ def record(
     playlist_base_path = resolve_param("playlist_base_path", playlist_base_path)
     max_duration = resolve_param("max_duration", max_duration)
     status_file = resolve_param("status_file", status_file)
+    control_stdin = resolve_param("control_stdin", control_stdin)
 
     if spotifyd_mode:
         player = "spotifyd"
@@ -697,20 +705,53 @@ def record(
     
     processing_thread = threading.Thread(target=manager.run, daemon=True)
     cleanup_done = False
+    cleanup_lock = threading.Lock()
+    control_stop_requested = threading.Event()
 
     def graceful_shutdown() -> None:
         nonlocal cleanup_done
-        if cleanup_done:
-            return
+        with cleanup_lock:
+            if cleanup_done:
+                return
 
-        logging.info("Processing remaining tracks before shutdown...")
-        manager.shutdown_cleanup()
-        event_queue.put(("shutdown", None))
-        if processing_thread.is_alive():
-            processing_thread.join()
-        manager.flush_cache()
-        cleanup_done = True
-        publish_status("stopped")
+            logging.info("Processing remaining tracks before shutdown...")
+            manager.shutdown_cleanup()
+            event_queue.put(("shutdown", None))
+            if processing_thread.is_alive():
+                processing_thread.join()
+            manager.flush_cache()
+            cleanup_done = True
+            publish_status("stopped")
+
+    def handle_control_command(command: dict) -> None:
+        cmd = command.get("cmd")
+        if cmd == "stop":
+            logging.info("Received stdin control command: stop")
+            ui_state["recording_status"] = "Stop requested - finalizing recording..."
+            publish_status("stopping")
+            graceful_shutdown()
+            control_stop_requested.set()
+        else:
+            logging.warning("Ignoring unsupported stdin control command: %s", cmd)
+
+    def read_control_stdin() -> None:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                command = json.loads(line)
+            except json.JSONDecodeError as e:
+                logging.warning("Invalid stdin control command: %s", e)
+                continue
+            if not isinstance(command, dict):
+                logging.warning("Invalid stdin control command type: %s", type(command).__name__)
+                continue
+            handle_control_command(command)
+
+    if control_stdin:
+        control_thread = threading.Thread(target=read_control_stdin, daemon=True)
+        control_thread.start()
 
     # Start metrics collection if enabled
     if metrics_collector:
@@ -845,6 +886,9 @@ def record(
                     while processing_thread.is_alive():
                         time.sleep(0.1)
                         now = time.monotonic()
+
+                        if control_stop_requested.is_set():
+                            break
 
                         if status_writer and now - last_status_heartbeat >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
                             publish_status()
