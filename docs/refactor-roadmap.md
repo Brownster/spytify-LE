@@ -31,8 +31,8 @@ flowchart LR
         mpris["MPRIS events"] --> eng
         eng["RecorderEngine\n(capture · segment · dispatch)"] --> ledger["chunk ledger\n(timestamped raw chunks)"]
         eng --> work["export worker\n(slice · encode · tag · art)"]
-        eng --> status["status channel\n(JSON file / local socket)"]
-        ctrl["control channel\n(start/stop/pause/resume/config)"] --> eng
+        eng --> status["status channel\n(atomic JSON file)"]
+        ctrl["control channel\n(stdin NDJSON commands)"] --> eng
     end
     cli["CLI frontend"] -->|in-process| eng
     web["web UI service\n(supervisor)"] -->|spawn + control + read status| rec
@@ -75,9 +75,9 @@ do **not** yet.
   audio stream lifecycle, MPRIS subscription, the segment manager, and start/stop/pause/resume.
 - [ ] Define **structured recorder state** (dataclass): `state`, `current_track`,
   `tracks_recorded`, `timer_*`, `dropped_frames`, `queue_depth`, `last_error`.
-- [ ] **Status channel:** engine writes state to a JSON file (atomic write) or local socket on change/tick.
+- [ ] **Status channel:** engine writes state to a JSON file (atomic write) on change/tick.
 - [ ] **Control channel:** engine accepts start/stop/pause/resume/reconfigure commands
-  (file/socket/signal-based — decide in design note).
+  as newline-delimited JSON from stdin when run as the web-owned subprocess.
 - [ ] CLI `record` becomes a thin wrapper over `RecorderEngine`.
 - [ ] Web service reads the status channel instead of grepping `recorder.log`
   (`service_app.py` `_serve_logs`/status), and sends control commands instead of
@@ -151,11 +151,79 @@ behaviour regression in the suite or a real recording check.
   **B2 (separate recorder process + structured IPC)** for crash isolation. Rejected
   B1 (in-process engine in the web server) to avoid coupling UI uptime to recorder
   crashes.
+- **2026-06-07** — Pass 1 transport set to **atomic JSON status file** plus
+  **newline-delimited JSON control commands over subprocess stdin**. Rejected a Unix
+  domain socket for now because polling status already fits the web UI, stdin control
+  is lifecycle-bound to the child process, and the socket lifecycle would add code
+  before there is a push/bidirectional requirement.
+
+## Pass 1 design note — status/control transport
+
+### Status
+
+The recorder writes a single JSON status document to a configured path using atomic
+replace:
+
+1. Serialize state to a temp file in the same directory.
+2. Flush and fsync the temp file.
+3. `rename`/`replace` it over the previous status file.
+
+The web service continues polling its existing `/status` endpoint, but the endpoint
+reads this status file instead of grepping `recorder.log`. This keeps the status
+channel inspectable with normal shell tools, restart-safe, and independent of log
+wording.
+
+Suggested initial shape:
+
+```json
+{
+  "schema_version": 1,
+  "pid": 12345,
+  "state": "recording",
+  "current_track": {
+    "artist": "Artist",
+    "title": "Title",
+    "album": "Album",
+    "duration_ms": 180000,
+    "position": 42.1
+  },
+  "tracks_recorded": 12,
+  "timer": {
+    "enabled": true,
+    "elapsed_seconds": 600,
+    "remaining_seconds": 1200
+  },
+  "audio": {
+    "queue_depth": 8,
+    "dropped_frames": 0,
+    "buffer_warnings": 0
+  },
+  "last_error": null,
+  "updated_at": "2026-06-07T14:30:00Z"
+}
+```
+
+### Control
+
+When the web service owns the recorder subprocess, it sends one newline-delimited JSON
+command per line to the child's stdin:
+
+```json
+{"cmd":"pause","request_id":"..."}
+{"cmd":"resume","request_id":"..."}
+{"cmd":"stop","request_id":"...","flush":true}
+```
+
+The recorder reads stdin on a small non-audio thread and translates commands into the
+same engine methods used by the in-process CLI. Command handling must never touch the
+PortAudio callback or block audio queue draining.
+
+This replaces ad hoc `SIGSTOP`/`SIGCONT`/kill control in the web service with explicit
+commands while preserving B2 crash isolation. A Unix domain socket remains a later
+option if the UI needs push updates or multiple controllers.
 
 ## Open questions
 
-- Control/status transport: JSON status file + signal/file control, or a local
-  Unix socket for both? (Decide in the Pass 1 design note.)
 - Do we keep adaptive buffer management at all, or settle on fixed profiles + manual
   overrides? (Lean: keep the *profiles*, drop the runtime adaptive resize since it's
   currently a no-op.)
