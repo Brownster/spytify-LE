@@ -59,6 +59,16 @@ class AudioChunk:
     samples: np.ndarray
 
 
+@dataclass
+class SegmentWindow:
+    """Materialized audio window with absolute-frame addressing metadata."""
+
+    audio: AudioSegment
+    start_frame: int
+    end_frame: int
+    from_ledger: bool
+
+
 class ChunkLedger:
     """Frame-addressed raw audio ledger for the capture hot path."""
 
@@ -281,6 +291,21 @@ class SegmentManager:
         self.continuous_buffer_start_frame += self._ms_to_frames(milliseconds)
         self._discard_ledger_before_buffer_start()
 
+    def _drop_audio_before_frame(self, frame: int) -> int:
+        """Drop retained audio before an absolute frame and return dropped ms."""
+        discard_frame = min(
+            max(frame, self.chunk_ledger.base_frame),
+            self.chunk_ledger.total_frames,
+        )
+        dropped_frames = max(0, discard_frame - self._buffer_start_frame())
+        dropped_ms = self._frames_to_ms(dropped_frames)
+
+        if len(self.continuous_buffer):
+            self.continuous_buffer = self.continuous_buffer[dropped_ms:]
+        self.continuous_buffer_start_frame = discard_frame
+        self.chunk_ledger.discard_before(discard_frame)
+        return dropped_ms
+
     def _discard_ledger_before_buffer_start(self) -> None:
         """Keep the transition ledger bounded to the legacy buffer window."""
         discard_frame = min(
@@ -368,7 +393,7 @@ class SegmentManager:
                         marker = TrackMarker(0, data, self.chunk_ledger.total_frames)
                         self.track_markers = [marker]
                     else:
-                        marker_timestamp = len(self.continuous_buffer)
+                        marker_timestamp = self._current_buffer_ms()
                         marker = TrackMarker(
                             marker_timestamp,
                             data,
@@ -385,24 +410,13 @@ class SegmentManager:
     # ------------------------------------------------------------------
 
     def _ingest_audio(self) -> None:
-        """Pull all frames from ``audio_queue`` into the continuous buffer."""
+        """Pull all frames from ``audio_queue`` into the frame ledger."""
         if not self.audio_queue or self.audio_queue.empty():
             return
 
-        segment = AudioSegment.empty()
         while not self.audio_queue.empty():
             frames = self.audio_queue.get_nowait()
             self._append_frames_to_ledger(frames)
-            frames = np.clip(frames, -1.0, 1.0)
-            int_samples = (frames * np.iinfo(np.int16).max).astype(np.int16)
-            seg = AudioSegment(
-                int_samples.tobytes(),
-                frame_rate=self.samplerate,
-                sample_width=2,
-                channels=frames.shape[1],
-            )
-            segment += seg
-        self.continuous_buffer += segment
 
     def _append_frames_to_ledger(self, frames: np.ndarray) -> None:
         """Append audio frames to the transition ledger on the segment thread."""
@@ -439,6 +453,21 @@ class SegmentManager:
         """Convert a continuous_buffer-relative millisecond offset to an absolute frame."""
         return self._buffer_start_frame() + self._ms_to_frames(milliseconds)
 
+    def _current_buffer_ms(self) -> int:
+        """Return retained audio duration in ms for marker compatibility."""
+        if self.chunk_ledger.retained_frames:
+            return self._frames_to_ms(self.chunk_ledger.retained_frames)
+        return len(self.continuous_buffer)
+
+    def _boundary_context_frames(self) -> int:
+        """Return pre/post-roll frames needed by the millisecond boundary detector."""
+        context_ms = (
+            self.boundary_detector.grace_period_ms
+            + self.boundary_detector.max_correction_ms
+            + self.boundary_detector.continuity_validator.window_size_ms
+        )
+        return self._ms_to_frames(context_ms)
+
     def _marker_frame(self, marker: TrackMarker) -> int:
         """Return a marker's absolute frame, deriving it from ms for legacy callers."""
         if marker.frame is not None:
@@ -453,6 +482,53 @@ class SegmentManager:
         """Rebase a legacy marker timestamp while preserving absolute frame position."""
         return marker._replace(timestamp=max(0, marker.timestamp - dropped_ms))
 
+    def _segment_window(self, start_marker: TrackMarker, end_marker: TrackMarker) -> SegmentWindow:
+        """Materialize the smallest detector window available for a complete segment."""
+        start_frame = self._marker_frame(start_marker)
+        end_frame = self._marker_frame(end_marker)
+
+        if (
+            self.chunk_ledger.retained_frames
+            and start_frame >= self.chunk_ledger.base_frame
+            and end_frame <= self.chunk_ledger.total_frames
+        ):
+            context_frames = self._boundary_context_frames()
+            window_start = max(self.chunk_ledger.base_frame, start_frame - context_frames)
+            window_end = min(self.chunk_ledger.total_frames, end_frame + context_frames)
+            return SegmentWindow(
+                audio=self.chunk_ledger.to_audio_segment(window_start, window_end),
+                start_frame=window_start,
+                end_frame=window_end,
+                from_ledger=True,
+            )
+
+        return SegmentWindow(
+            audio=self.continuous_buffer,
+            start_frame=self._buffer_start_frame(),
+            end_frame=self._buffer_ms_to_frame(len(self.continuous_buffer)),
+            from_ledger=False,
+        )
+
+    def _window_marker_ms(self, marker: TrackMarker, window: SegmentWindow) -> int:
+        """Return marker offset in ms relative to a materialized segment window."""
+        return self._frames_to_ms(self._marker_frame(marker) - window.start_frame)
+
+    def _audio_from_window_ms(
+        self,
+        window: SegmentWindow,
+        start_ms: int,
+        end_ms: int,
+    ) -> AudioSegment:
+        """Slice a window-relative ms range from the ledger or legacy buffer."""
+        if not window.from_ledger:
+            return window.audio[start_ms:end_ms]
+
+        start_frame = window.start_frame + self._ms_to_frames(start_ms)
+        end_frame = window.start_frame + self._ms_to_frames(end_ms)
+        start_frame = max(window.start_frame, min(start_frame, window.end_frame))
+        end_frame = max(start_frame, min(end_frame, window.end_frame))
+        return self.chunk_ledger.to_audio_segment(start_frame, end_frame)
+
     def process_segments(self) -> None:
         """Process the first complete segment using enhanced boundary detection with grace period and continuity validation."""
         if len(self.track_markers) < 2:
@@ -460,13 +536,23 @@ class SegmentManager:
 
         start_marker = self.track_markers[0]
         end_marker = self.track_markers[1]
-        start_ms = self._marker_ms(start_marker)
         end_ms = self._marker_ms(end_marker)
 
         if not is_song(start_marker.track_info):
             logger.debug("Previous item was not a song, skipping segment.")
-            self._drop_continuous_buffer_before(end_ms)
-            self.track_markers.pop(0)
+            if end_marker.frame is not None:
+                retain_frame = max(
+                    self.chunk_ledger.base_frame,
+                    self._marker_frame(end_marker) - self._boundary_context_frames(),
+                )
+                dropped_ms = self._drop_audio_before_frame(retain_frame)
+                self.track_markers = [
+                    self._rebase_marker_after_drop(marker, dropped_ms)
+                    for marker in self.track_markers[1:]
+                ]
+            else:
+                self._drop_continuous_buffer_before(end_ms)
+                self.track_markers.pop(0)
             return
 
         # Set current processing track for error recovery
@@ -606,8 +692,9 @@ class SegmentManager:
         """
         try:
             # Convert to enhanced track markers for boundary detection
-            start_ms = self._marker_ms(start_marker)
-            end_ms = self._marker_ms(end_marker)
+            window = self._segment_window(start_marker, end_marker)
+            start_ms = self._window_marker_ms(start_marker, window)
+            end_ms = self._window_marker_ms(end_marker, window)
             enhanced_markers = [
                 EnhancedTrackMarker(
                     timestamp=start_ms,
@@ -623,14 +710,14 @@ class SegmentManager:
 
             # Use TrackBoundaryDetector for enhanced boundary detection
             boundary_result = self.boundary_detector.detect_boundary(
-                self.continuous_buffer, enhanced_markers
+                window.audio, enhanced_markers
             )
 
             if not boundary_result:
                 logger.warning("Boundary detection failed for track: %s", start_marker.track_info.title)
                 # Fallback to original timestamp-based cutting
-                song_chunk = self.continuous_buffer[start_ms : end_ms]
-                cleanup_timestamp = end_ms
+                song_chunk = self._audio_from_window_ms(window, start_ms, end_ms)
+                cleanup_ms = end_ms
             else:
                 # Use enhanced boundary detection results
                 logger.debug(
@@ -641,8 +728,12 @@ class SegmentManager:
                 )
                 
                 # Extract audio segment using detected boundaries
-                song_chunk = self.continuous_buffer[boundary_result.start_frame : boundary_result.end_frame]
-                cleanup_timestamp = boundary_result.end_frame
+                song_chunk = self._audio_from_window_ms(
+                    window,
+                    boundary_result.start_frame,
+                    boundary_result.end_frame,
+                )
+                cleanup_ms = boundary_result.end_frame
                 
                 # Log boundary detection details
                 if boundary_result.grace_period_applied:
@@ -700,9 +791,17 @@ class SegmentManager:
                     return False
 
             # Clean up buffer and markers using the cleanup timestamp
-            self._drop_continuous_buffer_before(cleanup_timestamp)
+            if window.from_ledger:
+                retain_frame = max(
+                    self.chunk_ledger.base_frame,
+                    self._marker_frame(end_marker) - self._boundary_context_frames(),
+                )
+                dropped_ms = self._drop_audio_before_frame(retain_frame)
+            else:
+                self._drop_continuous_buffer_before(cleanup_ms)
+                dropped_ms = cleanup_ms
             self.track_markers = [
-                self._rebase_marker_after_drop(marker, cleanup_timestamp)
+                self._rebase_marker_after_drop(marker, dropped_ms)
                 for marker in self.track_markers[1:]
             ]
             

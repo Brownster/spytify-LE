@@ -63,14 +63,21 @@ def test_ingest_audio_mirrors_frames_to_chunk_ledger(monkeypatch, tmp_path):
 
     manager._ingest_audio()
 
-    assert len(manager.continuous_buffer) == 20
+    assert len(manager.continuous_buffer) == 0
     assert manager.chunk_ledger.total_frames == 882
     assert manager.chunk_ledger.retained_frames == 882
+    assert manager._current_buffer_ms() == 20
 
     ledger_audio = manager.chunk_ledger.to_audio_segment(0, 882)
-    continuous_samples = np.array(manager.continuous_buffer.get_array_of_samples())
     ledger_samples = np.array(ledger_audio.get_array_of_samples())
-    np.testing.assert_array_equal(ledger_samples, continuous_samples)
+    expected = np.concatenate(
+        [
+            (np.clip(frames1, -1.0, 1.0) * np.iinfo(np.int16).max).astype(np.int16),
+            (np.clip(frames2, -1.0, 1.0) * np.iinfo(np.int16).max).astype(np.int16),
+        ],
+        axis=0,
+    )
+    np.testing.assert_array_equal(ledger_samples.reshape((-1, 2)), expected)
 
 
 def test_continuous_buffer_origin_tracks_clear_and_drop(monkeypatch, tmp_path):
@@ -94,7 +101,7 @@ def test_continuous_buffer_origin_tracks_clear_and_drop(monkeypatch, tmp_path):
     manager._ingest_audio()
     manager._drop_continuous_buffer_before(10)
 
-    assert len(manager.continuous_buffer) == 10
+    assert len(manager.continuous_buffer) == 0
     assert manager.continuous_buffer_start_frame == 1323
     assert manager.chunk_ledger.base_frame == 1323
     assert manager.chunk_ledger.retained_frames == 441
@@ -114,7 +121,7 @@ def test_ledger_mirror_channel_mismatch_does_not_break_ingest(monkeypatch, tmp_p
 
     manager._ingest_audio()
 
-    assert len(manager.continuous_buffer) == 20
+    assert len(manager.continuous_buffer) == 0
     assert manager.chunk_ledger.total_frames == 441
     assert manager.chunk_ledger.retained_frames == 441
     assert "channel mismatch" in caplog.text
@@ -154,8 +161,9 @@ def test_frame_markers_bridge_to_boundary_detector_ms(monkeypatch, tmp_path):
 
     assert [marker.timestamp for marker in captured_markers] == [0, 10]
     assert exported == [10]
-    assert manager.continuous_buffer_start_frame == 1323
-    assert manager.track_markers[0].timestamp == 0
+    assert manager.continuous_buffer_start_frame == 882
+    assert manager.chunk_ledger.base_frame == 882
+    assert manager.track_markers[0].timestamp == 10
     assert manager.track_markers[0].frame == 1323
 
 
