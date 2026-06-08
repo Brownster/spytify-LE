@@ -15,9 +15,7 @@ def load_segmenter(monkeypatch):
     dummy_dbus.SessionBus = lambda: None
     monkeypatch.setitem(sys.modules, "pydbus", dummy_dbus)
     monkeypatch.setitem(sys.modules, "sounddevice", types.ModuleType("sounddevice"))
-    module = importlib.import_module("spotify_splitter.segmenter")
-    importlib.reload(module)
-    return module
+    return importlib.import_module("spotify_splitter.segmenter")
 
 
 def test_sanitize(monkeypatch):
@@ -49,6 +47,54 @@ def test_process_segments(monkeypatch, tmp_path):
 
     manager.process_segments()
     assert exported == ["T1"]
+
+
+def test_ingest_audio_mirrors_frames_to_chunk_ledger(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+
+    audio_q = queue.Queue()
+    manager = SegmentManager(44100, output_dir=tmp_path, fmt="wav", audio_queue=audio_q)
+
+    frames1 = np.ones((441, 2), dtype="float32") * 0.25
+    frames2 = np.ones((441, 2), dtype="float32") * -0.5
+    audio_q.put(frames1)
+    audio_q.put(frames2)
+
+    manager._ingest_audio()
+
+    assert len(manager.continuous_buffer) == 20
+    assert manager.chunk_ledger.total_frames == 882
+    assert manager.chunk_ledger.retained_frames == 882
+
+    ledger_audio = manager.chunk_ledger.to_audio_segment(0, 882)
+    continuous_samples = np.array(manager.continuous_buffer.get_array_of_samples())
+    ledger_samples = np.array(ledger_audio.get_array_of_samples())
+    np.testing.assert_array_equal(ledger_samples, continuous_samples)
+
+
+def test_continuous_buffer_origin_tracks_clear_and_drop(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+
+    audio_q = queue.Queue()
+    manager = SegmentManager(44100, output_dir=tmp_path, fmt="wav", audio_queue=audio_q)
+
+    audio_q.put(np.ones((882, 2), dtype="float32") * 0.25)
+    manager._ingest_audio()
+    manager._clear_continuous_buffer()
+
+    assert len(manager.continuous_buffer) == 0
+    assert manager.continuous_buffer_start_frame == 882
+    assert manager._buffer_ms_to_frame(0) == 882
+
+    audio_q.put(np.ones((882, 2), dtype="float32") * 0.5)
+    manager._ingest_audio()
+    manager._drop_continuous_buffer_before(10)
+
+    assert len(manager.continuous_buffer) == 10
+    assert manager.continuous_buffer_start_frame == 1323
+    assert manager._buffer_ms_to_frame(10) == 1764
 
 
 def test_is_song_new_format(monkeypatch):

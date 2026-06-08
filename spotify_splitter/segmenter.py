@@ -228,6 +228,8 @@ class SegmentManager:
                     logger.warning("Failed to read existing playlist entries: %s", e)
 
         self.continuous_buffer = AudioSegment.empty()
+        self.chunk_ledger = ChunkLedger(samplerate=samplerate, channels=2)
+        self.continuous_buffer_start_frame = 0
         self.track_markers: List[TrackMarker] = []
         self.first_track_seen = False
         
@@ -265,11 +267,25 @@ class SegmentManager:
             logger.info("LastFM API configured - will fetch year and genre metadata")
         else:
             logger.warning("LastFM API key not configured - year and genre tags will not be fetched")
+
+    def _clear_continuous_buffer(self) -> None:
+        """Clear the legacy pydub buffer and record its absolute frame origin."""
+        self.continuous_buffer = AudioSegment.empty()
+        self.continuous_buffer_start_frame = self.chunk_ledger.total_frames
+
+    def _drop_continuous_buffer_before(self, milliseconds: int) -> None:
+        """Drop legacy buffer audio before a millisecond offset and advance its origin."""
+        self.continuous_buffer = self.continuous_buffer[milliseconds:]
+        self.continuous_buffer_start_frame += self._ms_to_frames(milliseconds)
         
     def flush_cache(self) -> None:
         """Clear all cached data for clean startup."""
         logger.debug("Flushing SegmentManager cache...")
-        self.continuous_buffer = AudioSegment.empty()
+        self.chunk_ledger = ChunkLedger(
+            samplerate=self.samplerate,
+            channels=self.chunk_ledger.channels,
+        )
+        self._clear_continuous_buffer()
         self.track_markers.clear()
         self.first_track_seen = False
         
@@ -337,7 +353,7 @@ class SegmentManager:
                         logger.debug("First track seen: %s. Starting recording from next track.", data.title)
                         self.first_track_seen = True
                         # Clear buffer and start fresh
-                        self.continuous_buffer = AudioSegment.empty()
+                        self._clear_continuous_buffer()
                         marker = TrackMarker(0, data)
                         self.track_markers = [marker]
                     else:
@@ -360,6 +376,7 @@ class SegmentManager:
         segment = AudioSegment.empty()
         while not self.audio_queue.empty():
             frames = self.audio_queue.get_nowait()
+            self._append_frames_to_ledger(frames)
             frames = np.clip(frames, -1.0, 1.0)
             int_samples = (frames * np.iinfo(np.int16).max).astype(np.int16)
             seg = AudioSegment(
@@ -371,6 +388,34 @@ class SegmentManager:
             segment += seg
         self.continuous_buffer += segment
 
+    def _append_frames_to_ledger(self, frames: np.ndarray) -> None:
+        """Append audio frames to the transition ledger on the segment thread."""
+        if frames.size == 0:
+            return
+        if frames.ndim == 2 and frames.shape[1] != self.chunk_ledger.channels:
+            if self.chunk_ledger.retained_frames == 0:
+                self.chunk_ledger = ChunkLedger(
+                    samplerate=self.samplerate,
+                    channels=frames.shape[1],
+                )
+        self.chunk_ledger.append_float32(frames)
+
+    def _frames_to_ms(self, frames: int) -> int:
+        """Convert frame count to pydub millisecond units."""
+        return round((frames / self.samplerate) * 1000)
+
+    def _ms_to_frames(self, milliseconds: int) -> int:
+        """Convert pydub millisecond units to frame count."""
+        return round((milliseconds / 1000) * self.samplerate)
+
+    def _buffer_start_frame(self) -> int:
+        """Return the absolute frame that corresponds to continuous_buffer[0]."""
+        return self.continuous_buffer_start_frame
+
+    def _buffer_ms_to_frame(self, milliseconds: int) -> int:
+        """Convert a continuous_buffer-relative millisecond offset to an absolute frame."""
+        return self._buffer_start_frame() + self._ms_to_frames(milliseconds)
+
     def process_segments(self) -> None:
         """Process the first complete segment using enhanced boundary detection with grace period and continuity validation."""
         if len(self.track_markers) < 2:
@@ -381,7 +426,7 @@ class SegmentManager:
 
         if not is_song(start_marker.track_info):
             logger.debug("Previous item was not a song, skipping segment.")
-            self.continuous_buffer = self.continuous_buffer[end_marker.timestamp :]
+            self._drop_continuous_buffer_before(end_marker.timestamp)
             self.track_markers.pop(0)
             return
 
@@ -614,7 +659,7 @@ class SegmentManager:
                     return False
 
             # Clean up buffer and markers using the cleanup timestamp
-            self.continuous_buffer = self.continuous_buffer[cleanup_timestamp :]
+            self._drop_continuous_buffer_before(cleanup_timestamp)
             self.track_markers = [
                 marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
                 for marker in self.track_markers[1:]
@@ -986,7 +1031,7 @@ class SegmentManager:
                     
                     trim_point = len(self.continuous_buffer) - keep_duration
                     if trim_point > 0:
-                        self.continuous_buffer = self.continuous_buffer[trim_point:]
+                        self._drop_continuous_buffer_before(trim_point)
                         
                         # Adjust markers
                         self.track_markers = [
@@ -1159,7 +1204,7 @@ class SegmentManager:
                 if degraded_success:
                     # Clean up buffer and markers
                     cleanup_timestamp = end_marker.timestamp
-                    self.continuous_buffer = self.continuous_buffer[cleanup_timestamp :]
+                    self._drop_continuous_buffer_before(cleanup_timestamp)
                     self.track_markers = [
                         marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
                         for marker in self.track_markers[1:]
@@ -1317,7 +1362,7 @@ class SegmentManager:
 
         # Clean up buffer and markers to continue with next track
         cleanup_timestamp = end_marker.timestamp
-        self.continuous_buffer = self.continuous_buffer[cleanup_timestamp :]
+        self._drop_continuous_buffer_before(cleanup_timestamp)
         self.track_markers = [
             marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
             for marker in self.track_markers[1:]
