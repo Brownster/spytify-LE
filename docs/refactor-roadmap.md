@@ -106,7 +106,8 @@ runtime queues, stream context entry/exit, the segment-processing thread lifecyc
 MPRIS and buffer-health thread startup, the stdin control reader, timer tick state,
 and the lifecycle/heartbeat loop that drives timer expiry and normal-exit cleanup
 through the guarded stop/control path. `start()` now unwinds an entered stream on
-partial startup failure.
+partial startup failure. CLI rendering now calls `Live.update()` only from the main
+thread render loop; background callbacks only mutate state and publish status.
 
 ---
 
@@ -149,9 +150,6 @@ track. Long-session CPU/memory flat (no O(n²) growth).
 - [ ] **Split oversized modules:** pull embedded HTML/CSS/JS out of `service_app.py`
   (1339 lines) into a template file; break up `main.py`, `segmenter.py`, `audio.py`
   along the new engine seams.
-- [ ] **Single-thread Rich rendering:** keep `Live.update()` on the CLI/main thread by
-  rendering from engine status snapshots instead of updating Rich from MPRIS,
-  processing, and lifecycle callbacks.
 
 **Acceptance:** net line count down materially; each module has a single clear job; no
 behaviour regression in the suite or a real recording check.
