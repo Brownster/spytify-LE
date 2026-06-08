@@ -107,7 +107,9 @@ MPRIS and buffer-health thread startup, the stdin control reader, timer tick sta
 and the lifecycle/heartbeat loop that drives timer expiry and normal-exit cleanup
 through the guarded stop/control path. `start()` now unwinds an entered stream on
 partial startup failure. CLI rendering now calls `Live.update()` only from the main
-thread render loop; background callbacks only mutate state and publish status.
+thread render loop; background callbacks only mutate state and publish status. Post-run
+cleanup for metrics/dashboard/optimizer shutdown, playlist close, and external tagging
+now runs through the engine.
 
 ---
 
