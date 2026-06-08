@@ -289,6 +289,7 @@ class SegmentManager:
         self.recovery_attempts = 0
         self.successful_recoveries = 0
         self.degraded_exports = 0
+        self._stats_lock = threading.Lock()
         
         # Processing state for error recovery
         self.current_processing_track = None
@@ -410,11 +411,35 @@ class SegmentManager:
                     assert isinstance(item, ExportJob)
                     success = self._export_with_error_handling(item.audio, item.track_info)
                     if success:
-                        self.last_successful_export = item.track_info
+                        self._set_stat("last_successful_export", item.track_info)
                 finally:
                     self.export_queue.task_done()
         finally:
             self._export_worker_stopped.set()
+
+    def _increment_stat(self, name: str, amount: int = 1) -> None:
+        """Increment a diagnostic counter shared across worker threads."""
+        with self._stats_lock:
+            setattr(self, name, getattr(self, name) + amount)
+
+    def _set_stat(self, name: str, value) -> None:
+        """Set a diagnostic value shared across worker threads."""
+        with self._stats_lock:
+            setattr(self, name, value)
+
+    def _stats_snapshot(self) -> dict:
+        """Return a consistent diagnostic snapshot."""
+        with self._stats_lock:
+            return {
+                "processing_errors": self.processing_errors,
+                "export_errors": self.export_errors,
+                "recovery_attempts": self.recovery_attempts,
+                "successful_recoveries": self.successful_recoveries,
+                "degraded_exports": self.degraded_exports,
+                "current_processing_track": self.current_processing_track,
+                "processing_retry_count": self.processing_retry_count,
+                "last_successful_export": self.last_successful_export,
+            }
 
     def _submit_export_job(self, audio: AudioSegment, track_info: TrackInfo) -> bool:
         """Queue a completed segment for export without blocking audio ingestion."""
@@ -652,8 +677,8 @@ class SegmentManager:
             return
 
         # Set current processing track for error recovery
-        self.current_processing_track = start_marker.track_info
-        self.processing_retry_count = 0
+        self._set_stat("current_processing_track", start_marker.track_info)
+        self._set_stat("processing_retry_count", 0)
 
         logger.info("Processing segment for: %s", start_marker.track_info.title)
         if self.ui_callback:
@@ -685,12 +710,12 @@ class SegmentManager:
         """
         for attempt in range(self.max_processing_retries + 1):
             try:
-                self.processing_retry_count = attempt
+                self._set_stat("processing_retry_count", attempt)
                 success = self._process_segment_internal(start_marker, end_marker)
                 
                 if success:
                     if attempt > 0:
-                        self.successful_recoveries += 1
+                        self._increment_stat("successful_recoveries")
                         logger.info("Segment processing recovered after %d attempts: %s", 
                                   attempt, start_marker.track_info.title)
                         
@@ -717,8 +742,8 @@ class SegmentManager:
                 # advanced. Not a failure — do not retry or report.
                 return True
             except Exception as e:
-                self.processing_errors += 1
-                self.recovery_attempts += 1
+                self._increment_stat("processing_errors")
+                self._increment_stat("recovery_attempts")
                 
                 # Handle the error through error recovery manager
                 context = f"segment_processing_{start_marker.track_info.title}"
@@ -753,7 +778,7 @@ class SegmentManager:
                     if self.enable_graceful_degradation:
                         degraded_success = self._attempt_graceful_degradation(start_marker, end_marker, e)
                         if degraded_success:
-                            self.degraded_exports += 1
+                            self._increment_stat("degraded_exports")
                             logger.info("Graceful degradation successful for: %s", start_marker.track_info.title)
                             return True
                         else:
@@ -1168,7 +1193,7 @@ class SegmentManager:
                 return True
                 
             except Exception as e:
-                self.export_errors += 1
+                self._increment_stat("export_errors")
                 
                 # Handle export error through error recovery manager
                 context = f"export_{track_info.title}"
@@ -1203,7 +1228,7 @@ class SegmentManager:
                     if self.enable_graceful_degradation:
                         degraded_success = self._attempt_export_degradation(segment, track_info, e)
                         if degraded_success:
-                            self.degraded_exports += 1
+                            self._increment_stat("degraded_exports")
                             logger.info("Export graceful degradation successful for: %s", track_info.title)
                             return True
                         else:
@@ -1626,15 +1651,18 @@ class SegmentManager:
         Returns:
             Dictionary containing error statistics and recovery information
         """
+        snapshot = self._stats_snapshot()
+        current_track = snapshot["current_processing_track"]
+        last_export = snapshot["last_successful_export"]
         stats = {
-            "processing_errors": self.processing_errors,
-            "export_errors": self.export_errors,
-            "recovery_attempts": self.recovery_attempts,
-            "successful_recoveries": self.successful_recoveries,
-            "degraded_exports": self.degraded_exports,
-            "current_processing_track": self.current_processing_track.title if self.current_processing_track else None,
-            "processing_retry_count": self.processing_retry_count,
-            "last_successful_export": self.last_successful_export.title if self.last_successful_export else None,
+            "processing_errors": snapshot["processing_errors"],
+            "export_errors": snapshot["export_errors"],
+            "recovery_attempts": snapshot["recovery_attempts"],
+            "successful_recoveries": snapshot["successful_recoveries"],
+            "degraded_exports": snapshot["degraded_exports"],
+            "current_processing_track": current_track.title if current_track else None,
+            "processing_retry_count": snapshot["processing_retry_count"],
+            "last_successful_export": last_export.title if last_export else None,
             "error_recovery_enabled": self.enable_error_recovery,
             "graceful_degradation_enabled": self.enable_graceful_degradation,
             "max_processing_retries": self.max_processing_retries

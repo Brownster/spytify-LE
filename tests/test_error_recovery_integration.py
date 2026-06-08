@@ -395,7 +395,9 @@ class TestErrorRecoveryIntegration:
         
         assert len(found_events) > 0, f"Should have found error recovery events, got: {ui_callback_calls}"
     
-    def test_error_statistics_and_diagnostics(self, segment_manager, error_recovery_manager):
+    def test_error_statistics_and_diagnostics(
+        self, segment_manager, error_recovery_manager, mock_track_info
+    ):
         """Test error statistics collection and diagnostic reporting."""
         # Simulate some errors
         test_errors = [
@@ -406,6 +408,15 @@ class TestErrorRecoveryIntegration:
         
         for error in test_errors:
             error_recovery_manager.handle_error(error, "test_context")
+
+        segment_manager._increment_stat("processing_errors", 2)
+        segment_manager._increment_stat("export_errors")
+        segment_manager._increment_stat("recovery_attempts", 3)
+        segment_manager._increment_stat("successful_recoveries")
+        segment_manager._increment_stat("degraded_exports")
+        segment_manager._set_stat("current_processing_track", mock_track_info)
+        segment_manager._set_stat("processing_retry_count", 2)
+        segment_manager._set_stat("last_successful_export", mock_track_info)
         
         # Get statistics
         stats = segment_manager.get_error_statistics()
@@ -413,6 +424,14 @@ class TestErrorRecoveryIntegration:
         assert "processing_errors" in stats
         assert "export_errors" in stats
         assert "recovery_attempts" in stats
+        assert stats["processing_errors"] == 2
+        assert stats["export_errors"] == 1
+        assert stats["recovery_attempts"] == 3
+        assert stats["successful_recoveries"] == 1
+        assert stats["degraded_exports"] == 1
+        assert stats["current_processing_track"] == "Test Track"
+        assert stats["processing_retry_count"] == 2
+        assert stats["last_successful_export"] == "Test Track"
         assert "error_recovery_enabled" in stats
         assert stats["error_recovery_enabled"] is True
         
