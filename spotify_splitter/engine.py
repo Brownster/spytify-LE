@@ -1,7 +1,7 @@
 """Recorder engine seam definitions.
 
-This module starts with the stable types needed to extract orchestration from
-``main.py``. Pipeline ownership moves here in follow-up Pass 1 slices.
+This module contains the frontend-neutral recorder orchestration being
+extracted from ``main.py`` during Pass 1.
 """
 
 from __future__ import annotations
@@ -13,7 +13,8 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Iterable, Optional, Protocol
+from types import TracebackType
+from typing import Callable, Iterable, Optional, Protocol, Type
 
 from .util import StreamInfo
 
@@ -62,11 +63,26 @@ class SegmentManagerLike(Protocol):
     def flush_cache(self) -> None: ...
 
 
+class AudioStreamLike(Protocol):
+    """Context-manager surface used by the engine-owned stream lifecycle."""
+
+    def __enter__(self) -> object: ...
+
+    def __exit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc: Optional[BaseException],
+        tb: Optional[TracebackType],
+    ) -> object: ...
+
+
 StatusPublisher = Callable[[Optional[str]], None]
 ThreadTarget = Callable[[], None]
 ControlStopCallback = Callable[[], None]
 HeartbeatCallback = Callable[[], None]
 TimerCallback = Callable[[TimerTick], None]
+AudioStreamFactory = Callable[[], AudioStreamLike]
+TrackEventRunner = Callable[[Callable[[object], None], Callable[[str], None]], None]
 
 
 @dataclass(frozen=True)
@@ -116,9 +132,9 @@ class RecorderEngineConfig:
 class RecorderEngine:
     """Recorder orchestration shell.
 
-    This class intentionally starts as a narrow owner for runtime queues and the
-    shared cleanup/control path. Stream and MPRIS startup move here in follow-up
-    slices.
+    The engine owns runtime queues, stream lifetime, worker thread startup, and
+    the shared cleanup/control path. Pipeline internals remain in audio.py and
+    segmenter.py until the Pass 2 hot-path work.
     """
 
     def __init__(
@@ -134,8 +150,12 @@ class RecorderEngine:
         self._status_publisher = status_publisher
         self._segment_manager: Optional[SegmentManagerLike] = None
         self._processing_thread: Optional[threading.Thread] = None
+        self._mpris_thread: Optional[threading.Thread] = None
+        self._health_thread: Optional[threading.Thread] = None
         self._control_thread: Optional[threading.Thread] = None
         self._lifecycle_thread: Optional[threading.Thread] = None
+        self._audio_stream: Optional[AudioStreamLike] = None
+        self._audio_stream_entered = False
         self._cleanup_done = False
         self._cleanup_lock = threading.Lock()
         self._stopped = threading.Event()
@@ -168,6 +188,70 @@ class RecorderEngine:
         if not self._processing_thread:
             raise RecorderError("processing thread has not been configured")
         self._processing_thread.start()
+
+    def start(
+        self,
+        manager: SegmentManagerLike,
+        processing_target: ThreadTarget,
+        stream_factory: AudioStreamFactory,
+        track_event_runner: Optional[TrackEventRunner] = None,
+        on_track_change: Optional[Callable[[object], None]] = None,
+        on_playback_status: Optional[Callable[[str], None]] = None,
+        health_monitor_target: Optional[ThreadTarget] = None,
+        control_input_stream: Optional[Iterable[str]] = None,
+        on_control_stop_requested: Optional[ControlStopCallback] = None,
+        heartbeat_interval: float = 0.0,
+        on_heartbeat: Optional[HeartbeatCallback] = None,
+        on_timer_tick: Optional[TimerCallback] = None,
+        on_timer_expired: Optional[TimerCallback] = None,
+    ) -> None:
+        """Start recorder-owned runtime resources and return immediately."""
+        if self._processing_thread and self._processing_thread.is_alive():
+            raise RecorderError("recorder engine is already running")
+
+        try:
+            self._segment_manager = manager
+            self._audio_stream = stream_factory()
+            self._audio_stream.__enter__()
+            self._audio_stream_entered = True
+
+            self.create_processing_thread(manager, processing_target)
+            self.start_processing()
+
+            if health_monitor_target:
+                self._health_thread = threading.Thread(target=health_monitor_target, daemon=True)
+                self._health_thread.start()
+
+            if track_event_runner:
+                self._mpris_thread = threading.Thread(
+                    target=self._run_track_events,
+                    args=(track_event_runner, on_track_change, on_playback_status),
+                    daemon=True,
+                )
+                self._mpris_thread.start()
+                logging.info("MPRIS thread started")
+
+            if self.config.control_stdin and control_input_stream is not None:
+                self.start_control_reader(control_input_stream, on_control_stop_requested)
+
+            if self.is_timer_enabled():
+                self.start_timer()
+
+            self.start_lifecycle_loop(
+                heartbeat_interval=heartbeat_interval,
+                on_heartbeat=on_heartbeat,
+                on_timer_tick=on_timer_tick,
+                on_timer_expired=on_timer_expired,
+            )
+        except Exception as e:
+            logging.error("Recorder startup failed: %s", e)
+            try:
+                self.stop(flush=True)
+            except Exception as cleanup_error:
+                logging.debug("Error while unwinding failed recorder startup: %s", cleanup_error)
+            if isinstance(e, RecorderError):
+                raise
+            raise RecorderError("Recorder startup failed") from e
 
     def processing_is_alive(self) -> bool:
         return bool(self._processing_thread and self._processing_thread.is_alive())
@@ -329,6 +413,7 @@ class RecorderEngine:
             if self._cleanup_done:
                 return
 
+            self._publish_status("stopping")
             logging.info("Processing remaining tracks before shutdown...")
             if flush and self._segment_manager:
                 self._segment_manager.shutdown_cleanup()
@@ -337,6 +422,7 @@ class RecorderEngine:
                 self.wait_processing()
             if self._segment_manager:
                 self._segment_manager.flush_cache()
+            self._exit_audio_stream()
             self._cleanup_done = True
             self._stopped.set()
             self._publish_status("stopped")
@@ -345,7 +431,6 @@ class RecorderEngine:
         cmd = command.get("cmd")
         if cmd == "stop":
             logging.info("Received stdin control command: stop")
-            self._publish_status("stopping")
             self.stop(flush=bool(command.get("flush", True)))
             self.control_stop_requested.set()
             return True
@@ -356,3 +441,28 @@ class RecorderEngine:
     def _publish_status(self, state: str) -> None:
         if self._status_publisher:
             self._status_publisher(state)
+
+    def _run_track_events(
+        self,
+        track_event_runner: TrackEventRunner,
+        on_track_change: Optional[Callable[[object], None]],
+        on_playback_status: Optional[Callable[[str], None]],
+    ) -> None:
+        try:
+            logging.info("Starting MPRIS tracking for player: %s", self.config.player)
+            track_event_runner(
+                on_track_change or (lambda _track: None),
+                on_playback_status or (lambda _status: None),
+            )
+        except Exception as e:
+            logging.error("MPRIS tracking failed: %s", e)
+
+    def _exit_audio_stream(self) -> None:
+        if not self._audio_stream_entered or not self._audio_stream:
+            return
+        try:
+            self._audio_stream.__exit__(None, None, None)
+        except Exception as e:
+            logging.debug("Error stopping audio stream: %s", e)
+        finally:
+            self._audio_stream_entered = False

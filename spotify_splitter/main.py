@@ -749,17 +749,12 @@ def record(
     ui_state["emergency_expansions"] = 0
     engine.set_status_publisher(publish_status)
     publish_status("waiting")
-    
-    engine.create_processing_thread(manager, manager.run)
 
     def graceful_shutdown() -> None:
         engine.stop(flush=True)
 
     def on_control_stop_requested() -> None:
         ui_state["recording_status"] = "Stop requested - finalizing recording..."
-
-    if control_stdin:
-        engine.start_control_reader(sys.stdin, on_stop_requested=on_control_stop_requested)
 
     # Start metrics collection if enabled
     if metrics_collector:
@@ -782,30 +777,30 @@ def record(
 
     try:
         with live:
-            # Choose audio stream implementation based on adaptive management setting
-            if effective_adaptive and buffer_manager:
-                # Use enhanced audio stream with adaptive capabilities
-                audio_stream = EnhancedAudioStream(
-                    monitor_name=info.monitor_name,
-                    buffer_manager=buffer_manager,
-                    error_recovery=error_recovery,
-                    health_monitor=health_monitor,
-                    metrics_collector=metrics_collector,
-                    samplerate=info.samplerate,
-                    channels=info.channels,
-                    q=audio_queue,
-                    queue_size=effective_queue_size,
-                    blocksize=effective_blocksize,
-                    latency=effective_latency,
-                    ui_callback=enhanced_ui_callback,
-                    enable_adaptive_management=effective_adaptive,
-                    enable_health_monitoring=effective_monitoring,
-                    enable_metrics_collection=effective_metrics
-                )
-                logging.info("Using enhanced audio stream with adaptive management")
-            else:
-                # Use basic audio stream
-                audio_stream = AudioStream(
+            def create_audio_stream():
+                # Choose audio stream implementation based on adaptive management setting
+                if effective_adaptive and buffer_manager:
+                    logging.info("Using enhanced audio stream with adaptive management")
+                    return EnhancedAudioStream(
+                        monitor_name=info.monitor_name,
+                        buffer_manager=buffer_manager,
+                        error_recovery=error_recovery,
+                        health_monitor=health_monitor,
+                        metrics_collector=metrics_collector,
+                        samplerate=info.samplerate,
+                        channels=info.channels,
+                        q=audio_queue,
+                        queue_size=effective_queue_size,
+                        blocksize=effective_blocksize,
+                        latency=effective_latency,
+                        ui_callback=enhanced_ui_callback,
+                        enable_adaptive_management=effective_adaptive,
+                        enable_health_monitoring=effective_monitoring,
+                        enable_metrics_collection=effective_metrics,
+                    )
+
+                logging.info("Using basic audio stream")
+                return AudioStream(
                     info.monitor_name,
                     samplerate=info.samplerate,
                     channels=info.channels,
@@ -815,9 +810,7 @@ def record(
                     latency=effective_latency,
                     ui_callback=enhanced_ui_callback,
                 )
-                logging.info("Using basic audio stream")
-            
-            # Define callbacks before audio stream context
+
             def on_change(track):
                 logging.info(f"TRACK CHANGE CALLBACK: {track.artist} - {track.title}")
                 ui_state["current_track"] = track
@@ -838,68 +831,60 @@ def record(
                     publish_status("paused")
                 live.update(create_enhanced_ui())
 
-            with audio_stream:
-                engine.start_processing()
-                
-                # Start buffer health monitoring in a separate thread if enabled
-                def monitor_buffer_health():
-                    if effective_adaptive and buffer_manager:
-                        import time
-                        while engine.processing_is_alive():
-                            try:
-                                metrics = buffer_manager.monitor_utilization(audio_queue)
-                                health = buffer_manager.get_buffer_health(metrics)
-                                
-                                enhanced_ui_callback("buffer_health", {
-                                    "status": health.status.value.upper(),
-                                    "utilization": health.utilization * 100
-                                })
-                                
-                                time.sleep(1.0)  # Update every second
-                            except Exception as e:
-                                logging.debug(f"Error in buffer health monitoring: {e}")
-                                time.sleep(2.0)
-                
+            def monitor_buffer_health():
                 if effective_adaptive and buffer_manager:
-                    health_thread = threading.Thread(target=monitor_buffer_health, daemon=True)
-                    health_thread.start()
-                
-                # Start MPRIS tracking in a separate thread to avoid blocking
-                def mpris_wrapper():
-                    try:
-                        logging.info(f"Starting MPRIS tracking for player: {player}")
-                        track_events(
-                            on_change,
-                            on_status,
-                            dump_metadata=dump_metadata,
-                            player_name=player,
-                        )
-                    except Exception as e:
-                        logging.error(f"MPRIS tracking failed: {e}")
-                        
-                mpris_thread = threading.Thread(target=mpris_wrapper, daemon=True)
-                mpris_thread.start()
-                logging.info("MPRIS thread started")
-                
-                # Keep the main thread alive while MPRIS and audio recording run
-                # Initialize timer if max_duration is specified
-                if engine.is_timer_enabled():
-                    apply_timer_snapshot(engine.start_timer())
-                    publish_status("recording")
+                    while engine.processing_is_alive():
+                        try:
+                            metrics = buffer_manager.monitor_utilization(audio_queue)
+                            health = buffer_manager.get_buffer_health(metrics)
 
-                engine.start_lifecycle_loop(
-                    heartbeat_interval=STATUS_HEARTBEAT_INTERVAL_SECONDS,
-                    on_heartbeat=publish_status,
-                    on_timer_tick=on_timer_tick,
-                    on_timer_expired=on_timer_expired,
+                            enhanced_ui_callback("buffer_health", {
+                                "status": health.status.value.upper(),
+                                "utilization": health.utilization * 100
+                            })
+
+                            time.sleep(1.0)  # Update every second
+                        except Exception as e:
+                            logging.debug(f"Error in buffer health monitoring: {e}")
+                            time.sleep(2.0)
+
+            def run_track_events(on_track_change, on_playback_status):
+                track_events(
+                    on_track_change,
+                    on_playback_status,
+                    dump_metadata=dump_metadata,
+                    player_name=player,
                 )
 
-                try:
-                    while not engine.is_stopped():
-                        time.sleep(0.1)
+            engine.start(
+                manager=manager,
+                processing_target=manager.run,
+                stream_factory=create_audio_stream,
+                track_event_runner=run_track_events,
+                on_track_change=on_change,
+                on_playback_status=on_status,
+                health_monitor_target=monitor_buffer_health if effective_adaptive and buffer_manager else None,
+                control_input_stream=sys.stdin if control_stdin else None,
+                on_control_stop_requested=on_control_stop_requested,
+                heartbeat_interval=STATUS_HEARTBEAT_INTERVAL_SECONDS,
+                on_heartbeat=publish_status,
+                on_timer_tick=on_timer_tick,
+                on_timer_expired=on_timer_expired,
+            )
 
-                except KeyboardInterrupt:
-                    raise
+            # Keep the main thread alive while MPRIS and audio recording run
+            # Initialize timer display if max_duration is specified
+            if engine.is_timer_enabled():
+                apply_timer_snapshot(engine.timer_snapshot())
+                publish_status("recording")
+
+            try:
+                while not engine.is_stopped():
+                    live.update(create_enhanced_ui())
+                    time.sleep(0.1)
+
+            except KeyboardInterrupt:
+                raise
                 
     except KeyboardInterrupt:
         logging.info("Shutdown signal received")

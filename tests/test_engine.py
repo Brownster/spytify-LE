@@ -114,6 +114,19 @@ class BlockingManager:
         self.flush_calls += 1
 
 
+class FakeStream:
+    def __init__(self):
+        self.enter_calls = 0
+        self.exit_calls = 0
+
+    def __enter__(self):
+        self.enter_calls += 1
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self.exit_calls += 1
+
+
 def test_engine_creates_runtime_queues_from_config():
     engine = RecorderEngine(make_config(queue_size=123))
 
@@ -136,6 +149,58 @@ def test_engine_creates_and_starts_processing_thread():
 
     assert ran.is_set()
     assert not engine.processing_is_alive()
+
+
+def test_engine_start_enters_stream_and_stop_exits_it():
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    stream = FakeStream()
+    release = threading.Event()
+    started = threading.Event()
+
+    def target():
+        started.set()
+        release.wait(timeout=1.0)
+
+    engine.start(
+        manager=manager,
+        processing_target=target,
+        stream_factory=lambda: stream,
+    )
+    assert started.wait(timeout=1.0)
+
+    release.set()
+    engine.stop()
+
+    assert stream.enter_calls == 1
+    assert stream.exit_calls == 1
+    assert manager.shutdown_calls == 1
+    assert manager.flush_calls == 1
+    assert engine.is_stopped() is True
+
+
+def test_engine_start_unwinds_stream_on_partial_startup_failure(monkeypatch):
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    stream = FakeStream()
+
+    def fail_start_processing():
+        raise RecorderError("processing start failed")
+
+    monkeypatch.setattr(engine, "start_processing", fail_start_processing)
+
+    with pytest.raises(RecorderError, match="processing start failed"):
+        engine.start(
+            manager=manager,
+            processing_target=lambda: None,
+            stream_factory=lambda: stream,
+        )
+
+    assert stream.enter_calls == 1
+    assert stream.exit_calls == 1
+    assert manager.shutdown_calls == 1
+    assert manager.flush_calls == 1
+    assert engine.is_stopped() is True
 
 
 def test_engine_running_predicates_track_processing_and_cleanup():
@@ -282,7 +347,7 @@ def test_engine_lifecycle_stops_on_timer_expiry():
     assert manager.flush_calls == 1
     assert timer_expiries
     assert timer_expiries[0].expired is True
-    assert statuses == ["stopped"]
+    assert statuses == ["stopping", "stopped"]
 
 
 def test_engine_start_processing_requires_configured_thread():
@@ -306,7 +371,7 @@ def test_engine_stop_flushes_once_and_publishes_status():
     assert manager.flush_calls == 1
     assert thread.join_calls == 1
     assert engine.event_queue.get_nowait() == ("shutdown", None)
-    assert statuses == ["stopped"]
+    assert statuses == ["stopping", "stopped"]
 
 
 def test_engine_stop_can_skip_flush():
