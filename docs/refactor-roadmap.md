@@ -1,6 +1,6 @@
 # Refactor Roadmap — Core-First Engine Extraction (Option B2)
 
-Status: **planning** · Owner: Marc · Last updated: 2026-06-07
+Status: **planning** · Owner: Marc · Last updated: 2026-06-08
 
 ## Goal
 
@@ -102,8 +102,9 @@ split, thread ownership, and migration steps.
 **Extraction progress:** `spotify_splitter.engine` now defines domain exceptions,
 `RecorderEngineConfig`, and the first `RecorderEngine` runtime shell. `record()` builds
 the resolved config before constructing the current pipeline, and the engine now owns
-runtime queues, the segment-processing thread lifecycle, the stdin control reader, and
-timer tick state plus the guarded stop/control cleanup path.
+runtime queues, the segment-processing thread lifecycle, the stdin control reader,
+timer tick state, and the lifecycle/heartbeat loop that drives timer expiry and
+normal-exit cleanup through the guarded stop/control path.
 
 ---
 
