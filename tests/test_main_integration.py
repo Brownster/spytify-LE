@@ -534,6 +534,48 @@ class TestMainIntegration:
         
         # Verify diagnostic report was generated in debug mode
         mock_collector_instance.generate_diagnostic_report.assert_called_once()
+
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.track_events')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    @patch('spotify_splitter.main.BufferHealthMonitor')
+    @patch('spotify_splitter.main.MetricsCollector')
+    def test_metrics_and_monitoring_require_debug_mode(
+        self, mock_metrics_collector, mock_health_monitor, mock_segment_manager,
+        mock_enhanced_stream, mock_track_events, mock_get_stream_info
+    ):
+        """Test telemetry flags do not start background telemetry outside debug mode."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.run = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+
+        def mock_track_events_func(*args, **kwargs):
+            time.sleep(0.1)
+            raise KeyboardInterrupt()
+
+        mock_track_events.side_effect = mock_track_events_func
+
+        result = self.runner.invoke(app, [
+            'record',
+            '--profile', 'desktop',
+            '--metrics',
+            '--monitoring',
+            '--output', self.temp_dir
+        ])
+
+        assert result.exit_code == 0
+        mock_metrics_collector.assert_not_called()
+        mock_health_monitor.assert_not_called()
     
     @patch('spotify_splitter.main.get_spotify_stream_info')
     def test_cli_argument_overrides(self, mock_get_stream_info):

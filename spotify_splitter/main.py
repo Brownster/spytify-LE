@@ -158,12 +158,12 @@ def record(
     enable_monitoring: bool = typer.Option(
         True,
         "--monitoring/--no-monitoring", 
-        help="Enable buffer health monitoring",
+        help="Enable debug buffer health monitoring when --debug-mode is active",
     ),
     enable_metrics: bool = typer.Option(
         True,
         "--metrics/--no-metrics",
-        help="Enable performance metrics collection",
+        help="Enable debug performance metrics collection when --debug-mode is active",
     ),
     debug_mode: bool = typer.Option(
         False,
@@ -324,9 +324,17 @@ def record(
         
         # Override feature flags with CLI arguments
         effective_adaptive = enable_adaptive and config_profile.enable_adaptive_management
-        effective_monitoring = enable_monitoring and config_profile.enable_health_monitoring
-        effective_metrics = enable_metrics and config_profile.enable_metrics_collection
         effective_debug = debug_mode or config_profile.enable_debug_mode
+        effective_monitoring = (
+            effective_debug
+            and enable_monitoring
+            and config_profile.enable_health_monitoring
+        )
+        effective_metrics = (
+            effective_debug
+            and enable_metrics
+            and config_profile.enable_metrics_collection
+        )
         
         logging.info(f"Effective settings: queue_size={effective_queue_size}, blocksize={effective_blocksize}, "
                     f"latency={effective_latency}, adaptive={effective_adaptive}, monitoring={effective_monitoring}")
@@ -338,9 +346,9 @@ def record(
         effective_blocksize = blocksize or 2048
         effective_latency = latency or 0.1
         effective_adaptive = enable_adaptive
-        effective_monitoring = enable_monitoring
-        effective_metrics = enable_metrics
         effective_debug = debug_mode
+        effective_monitoring = effective_debug and enable_monitoring
+        effective_metrics = effective_debug and enable_metrics
 
     # Initialize adaptive buffer management components
     buffer_manager = None
