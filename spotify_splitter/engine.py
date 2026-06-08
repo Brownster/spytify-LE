@@ -159,6 +159,8 @@ class RecorderEngine:
         self._audio_stream_entered = False
         self._cleanup_done = False
         self._cleanup_lock = threading.Lock()
+        self._finalize_done = False
+        self._finalize_lock = threading.Lock()
         self._stopped = threading.Event()
         self._timer_duration_seconds = config.timer_duration_seconds or 0
         self._timer_start: Optional[float] = None
@@ -449,11 +451,15 @@ class RecorderEngine:
 
     def finalize_post_run(self) -> None:
         """Run non-realtime cleanup after recording has stopped."""
-        self._stop_performance_optimizer()
-        self._stop_performance_dashboard()
-        self._stop_metrics_collection()
-        self._close_playlist()
-        self._run_tagger()
+        with self._finalize_lock:
+            if self._finalize_done:
+                return
+            self._stop_performance_optimizer()
+            self._stop_performance_dashboard()
+            self._stop_metrics_collection()
+            self._close_playlist()
+            self._run_tagger()
+            self._finalize_done = True
 
     def handle_command(self, command: dict) -> bool:
         cmd = command.get("cmd")

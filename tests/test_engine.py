@@ -273,6 +273,7 @@ def test_engine_finalize_post_run_stops_components_and_tags_output():
     )
 
     engine.finalize_post_run()
+    engine.finalize_post_run()
 
     assert optimizer.stop_calls == 1
     assert dashboard.stop_calls == 1
