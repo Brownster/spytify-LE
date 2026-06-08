@@ -572,8 +572,6 @@ def record(
         title = "Spotify Splitter (Timed Recording)" if ui_state["timer_enabled"] else "Spotify Splitter (Adaptive)"
         return Panel(table, title=title, border_style="blue")
     
-    live = Live(create_enhanced_ui(), refresh_per_second=2)
-    
     def enhanced_ui_callback(action, data):
         if action == "processing":
             ui_state["recording_status"] = f"Processing: {data.title}"
@@ -760,6 +758,99 @@ def record(
     def on_control_stop_requested() -> None:
         ui_state["recording_status"] = "Stop requested - finalizing recording..."
 
+    def create_audio_stream():
+        # Choose audio stream implementation based on adaptive management setting
+        if effective_adaptive and buffer_manager:
+            logging.info("Using enhanced audio stream with adaptive management")
+            return EnhancedAudioStream(
+                monitor_name=info.monitor_name,
+                buffer_manager=buffer_manager,
+                error_recovery=error_recovery,
+                health_monitor=health_monitor,
+                metrics_collector=metrics_collector,
+                samplerate=info.samplerate,
+                channels=info.channels,
+                q=audio_queue,
+                queue_size=effective_queue_size,
+                blocksize=effective_blocksize,
+                latency=effective_latency,
+                ui_callback=enhanced_ui_callback,
+                enable_adaptive_management=effective_adaptive,
+                enable_health_monitoring=effective_monitoring,
+                enable_metrics_collection=effective_metrics,
+            )
+
+        logging.info("Using basic audio stream")
+        return AudioStream(
+            info.monitor_name,
+            samplerate=info.samplerate,
+            channels=info.channels,
+            q=audio_queue,
+            queue_size=effective_queue_size,
+            blocksize=effective_blocksize,
+            latency=effective_latency,
+            ui_callback=enhanced_ui_callback,
+        )
+
+    def on_change(track):
+        logging.info(f"TRACK CHANGE CALLBACK: {track.artist} - {track.title}")
+        ui_state["current_track"] = track
+        if ui_state["tracks_recorded"] == 0:
+            ui_state["recording_status"] = "First track - will be discarded"
+        else:
+            ui_state["recording_status"] = f"Recording: {track.artist} - {track.title}"
+        publish_status("recording")
+        event_queue.put(("track_change", track))
+
+    def on_status(status: str):
+        if status == "Playing":
+            ui_state["recording_status"] = "Recording audio..."
+            publish_status("recording")
+        elif status == "Paused":
+            ui_state["recording_status"] = "Playback paused"
+            publish_status("paused")
+
+    def monitor_buffer_health():
+        if effective_adaptive and buffer_manager:
+            while engine.processing_is_alive():
+                try:
+                    metrics = buffer_manager.monitor_utilization(audio_queue)
+                    health = buffer_manager.get_buffer_health(metrics)
+
+                    enhanced_ui_callback("buffer_health", {
+                        "status": health.status.value.upper(),
+                        "utilization": health.utilization * 100
+                    })
+
+                    time.sleep(1.0)  # Update every second
+                except Exception as e:
+                    logging.debug(f"Error in buffer health monitoring: {e}")
+                    time.sleep(2.0)
+
+    def run_track_events(on_track_change, on_playback_status):
+        track_events(
+            on_track_change,
+            on_playback_status,
+            dump_metadata=dump_metadata,
+            player_name=player,
+        )
+
+    engine_start_kwargs = {
+        "manager": manager,
+        "processing_target": manager.run,
+        "stream_factory": create_audio_stream,
+        "track_event_runner": run_track_events,
+        "on_track_change": on_change,
+        "on_playback_status": on_status,
+        "health_monitor_target": monitor_buffer_health if effective_adaptive and buffer_manager else None,
+        "control_input_stream": sys.stdin if control_stdin else None,
+        "on_control_stop_requested": on_control_stop_requested,
+        "heartbeat_interval": STATUS_HEARTBEAT_INTERVAL_SECONDS,
+        "on_heartbeat": publish_status,
+        "on_timer_tick": on_timer_tick,
+        "on_timer_expired": on_timer_expired,
+    }
+
     # Start metrics collection if enabled
     if metrics_collector:
         try:
@@ -780,117 +871,35 @@ def record(
             logging.error(f"Error starting metrics collection: {e}")
 
     try:
-        with live:
-            def create_audio_stream():
-                # Choose audio stream implementation based on adaptive management setting
-                if effective_adaptive and buffer_manager:
-                    logging.info("Using enhanced audio stream with adaptive management")
-                    return EnhancedAudioStream(
-                        monitor_name=info.monitor_name,
-                        buffer_manager=buffer_manager,
-                        error_recovery=error_recovery,
-                        health_monitor=health_monitor,
-                        metrics_collector=metrics_collector,
-                        samplerate=info.samplerate,
-                        channels=info.channels,
-                        q=audio_queue,
-                        queue_size=effective_queue_size,
-                        blocksize=effective_blocksize,
-                        latency=effective_latency,
-                        ui_callback=enhanced_ui_callback,
-                        enable_adaptive_management=effective_adaptive,
-                        enable_health_monitoring=effective_monitoring,
-                        enable_metrics_collection=effective_metrics,
-                    )
-
-                logging.info("Using basic audio stream")
-                return AudioStream(
-                    info.monitor_name,
-                    samplerate=info.samplerate,
-                    channels=info.channels,
-                    q=audio_queue,
-                    queue_size=effective_queue_size,
-                    blocksize=effective_blocksize,
-                    latency=effective_latency,
-                    ui_callback=enhanced_ui_callback,
-                )
-
-            def on_change(track):
-                logging.info(f"TRACK CHANGE CALLBACK: {track.artist} - {track.title}")
-                ui_state["current_track"] = track
-                if ui_state["tracks_recorded"] == 0:
-                    ui_state["recording_status"] = "First track - will be discarded"
-                else:
-                    ui_state["recording_status"] = f"Recording: {track.artist} - {track.title}"
-                publish_status("recording")
-                event_queue.put(("track_change", track))
-
-            def on_status(status: str):
-                if status == "Playing":
-                    ui_state["recording_status"] = "Recording audio..."
-                    publish_status("recording")
-                elif status == "Paused":
-                    ui_state["recording_status"] = "Playback paused"
-                    publish_status("paused")
-
-            def monitor_buffer_health():
-                if effective_adaptive and buffer_manager:
-                    while engine.processing_is_alive():
-                        try:
-                            metrics = buffer_manager.monitor_utilization(audio_queue)
-                            health = buffer_manager.get_buffer_health(metrics)
-
-                            enhanced_ui_callback("buffer_health", {
-                                "status": health.status.value.upper(),
-                                "utilization": health.utilization * 100
-                            })
-
-                            time.sleep(1.0)  # Update every second
-                        except Exception as e:
-                            logging.debug(f"Error in buffer health monitoring: {e}")
-                            time.sleep(2.0)
-
-            def run_track_events(on_track_change, on_playback_status):
-                track_events(
-                    on_track_change,
-                    on_playback_status,
-                    dump_metadata=dump_metadata,
-                    player_name=player,
-                )
-
+        headless_mode = os.environ.get("RICH_FORCE_TERMINAL") == "0"
+        if headless_mode:
             try:
-                engine.start(
-                    manager=manager,
-                    processing_target=manager.run,
-                    stream_factory=create_audio_stream,
-                    track_event_runner=run_track_events,
-                    on_track_change=on_change,
-                    on_playback_status=on_status,
-                    health_monitor_target=monitor_buffer_health if effective_adaptive and buffer_manager else None,
-                    control_input_stream=sys.stdin if control_stdin else None,
-                    on_control_stop_requested=on_control_stop_requested,
-                    heartbeat_interval=STATUS_HEARTBEAT_INTERVAL_SECONDS,
-                    on_heartbeat=publish_status,
-                    on_timer_tick=on_timer_tick,
-                    on_timer_expired=on_timer_expired,
-                )
+                engine.run(**engine_start_kwargs)
             except RecorderError as e:
                 logging.error("Recorder failed to start: %s", e)
                 raise typer.Exit(code=1)
+        else:
+            live = Live(create_enhanced_ui(), refresh_per_second=2)
+            with live:
+                try:
+                    engine.start(**engine_start_kwargs)
+                except RecorderError as e:
+                    logging.error("Recorder failed to start: %s", e)
+                    raise typer.Exit(code=1)
 
-            # Keep the main thread alive while MPRIS and audio recording run
-            # Initialize timer display if max_duration is specified
-            if engine.is_timer_enabled():
-                apply_timer_snapshot(engine.timer_snapshot())
-                publish_status("recording")
+                # Keep the main thread alive while MPRIS and audio recording run
+                # Initialize timer display if max_duration is specified
+                if engine.is_timer_enabled():
+                    apply_timer_snapshot(engine.timer_snapshot())
+                    publish_status("recording")
 
-            try:
-                while not engine.is_stopped():
-                    live.update(create_enhanced_ui())
-                    time.sleep(0.1)
+                try:
+                    while not engine.is_stopped():
+                        live.update(create_enhanced_ui())
+                        time.sleep(0.1)
 
-            except KeyboardInterrupt:
-                raise
+                except KeyboardInterrupt:
+                    raise
                 
     except KeyboardInterrupt:
         logging.info("Shutdown signal received")

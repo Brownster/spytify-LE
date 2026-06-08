@@ -350,6 +350,14 @@ class RecorderEngine:
     def wait(self, timeout: Optional[float] = None) -> bool:
         return self._stopped.wait(timeout=timeout)
 
+    def run(self, *args, **kwargs) -> None:
+        """Run a headless recorder session through finalization."""
+        try:
+            self.start(*args, **kwargs)
+            self.wait()
+        finally:
+            self.finalize_post_run()
+
     def run_lifecycle_once(
         self,
         on_timer_tick: Optional[TimerCallback] = None,

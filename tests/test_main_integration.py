@@ -764,6 +764,42 @@ class TestMainIntegration:
         assert "Recorder failed to start" in result.output
         assert "Traceback" not in result.output
 
+    @patch('spotify_splitter.main.tag_output')
+    @patch('spotify_splitter.main.Live')
+    @patch('spotify_splitter.main.RecorderEngine.run')
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_service_env_uses_headless_engine_run(
+        self,
+        mock_segment_manager,
+        mock_enhanced_stream,
+        mock_get_stream_info,
+        mock_engine_run,
+        mock_live,
+        mock_tag_output,
+    ):
+        """Test service-launched recorder subprocesses use the headless engine run path."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.run = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+
+        with patch.dict(os.environ, {"RICH_FORCE_TERMINAL": "0"}):
+            result = self.runner.invoke(app, ['record', '--output', self.temp_dir])
+
+        assert result.exit_code == 0
+        mock_engine_run.assert_called_once()
+        mock_live.assert_not_called()
+
 
 class TestConfigurationProfiles:
     """Test configuration profile functionality."""

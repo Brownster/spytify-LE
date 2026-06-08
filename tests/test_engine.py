@@ -292,6 +292,30 @@ def test_engine_finalize_post_run_tolerates_missing_components():
     assert engine.is_stopped() is False
 
 
+def test_engine_run_starts_waits_and_finalizes():
+    tag_calls = []
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    stream = FakeStream()
+    engine.configure_post_run_cleanup(
+        tag_output=lambda output_dir, playlist: tag_calls.append((output_dir, playlist)),
+    )
+
+    engine.run(
+        manager=manager,
+        processing_target=lambda: None,
+        stream_factory=lambda: stream,
+    )
+
+    assert engine.is_stopped() is True
+    assert stream.enter_calls == 1
+    assert stream.exit_calls == 1
+    assert manager.shutdown_calls == 1
+    assert manager.flush_calls == 1
+    assert manager.close_calls == 1
+    assert tag_calls == [(Path("/tmp/out"), None)]
+
+
 def test_engine_running_predicates_track_processing_and_cleanup():
     engine = RecorderEngine(make_config())
     manager = FakeManager()
