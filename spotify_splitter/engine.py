@@ -65,6 +65,8 @@ class SegmentManagerLike(Protocol):
 StatusPublisher = Callable[[Optional[str]], None]
 ThreadTarget = Callable[[], None]
 ControlStopCallback = Callable[[], None]
+HeartbeatCallback = Callable[[], None]
+TimerCallback = Callable[[TimerTick], None]
 
 
 @dataclass(frozen=True)
@@ -133,6 +135,7 @@ class RecorderEngine:
         self._segment_manager: Optional[SegmentManagerLike] = None
         self._processing_thread: Optional[threading.Thread] = None
         self._control_thread: Optional[threading.Thread] = None
+        self._lifecycle_thread: Optional[threading.Thread] = None
         self._cleanup_done = False
         self._cleanup_lock = threading.Lock()
         self._stopped = threading.Event()
@@ -215,6 +218,72 @@ class RecorderEngine:
     def wait_processing(self, timeout: Optional[float] = None) -> None:
         if self._processing_thread:
             self._processing_thread.join(timeout=timeout)
+
+    def start_lifecycle_loop(
+        self,
+        heartbeat_interval: float,
+        on_heartbeat: Optional[HeartbeatCallback] = None,
+        on_timer_tick: Optional[TimerCallback] = None,
+        on_timer_expired: Optional[TimerCallback] = None,
+        poll_interval: float = 0.1,
+    ) -> threading.Thread:
+        self._lifecycle_thread = threading.Thread(
+            target=self._lifecycle_loop,
+            args=(
+                heartbeat_interval,
+                on_heartbeat,
+                on_timer_tick,
+                on_timer_expired,
+                poll_interval,
+            ),
+            daemon=True,
+        )
+        self._lifecycle_thread.start()
+        return self._lifecycle_thread
+
+    def wait(self, timeout: Optional[float] = None) -> bool:
+        return self._stopped.wait(timeout=timeout)
+
+    def run_lifecycle_once(
+        self,
+        on_timer_tick: Optional[TimerCallback] = None,
+        on_timer_expired: Optional[TimerCallback] = None,
+    ) -> bool:
+        """Run one lifecycle iteration. Return false when the loop should exit."""
+        if self.is_stopped():
+            return False
+
+        if not self.processing_is_alive():
+            self.stop(flush=True)
+            return False
+
+        if self.is_timer_enabled():
+            timer_tick = self.tick_timer()
+            if timer_tick.elapsed_changed and on_timer_tick:
+                on_timer_tick(timer_tick)
+            if timer_tick.expired:
+                if on_timer_expired:
+                    on_timer_expired(timer_tick)
+                self.stop(flush=True)
+                return False
+
+        return True
+
+    def _lifecycle_loop(
+        self,
+        heartbeat_interval: float,
+        on_heartbeat: Optional[HeartbeatCallback],
+        on_timer_tick: Optional[TimerCallback],
+        on_timer_expired: Optional[TimerCallback],
+        poll_interval: float,
+    ) -> None:
+        last_heartbeat = time.monotonic()
+        while self.run_lifecycle_once(on_timer_tick, on_timer_expired):
+            now = time.monotonic()
+            if on_heartbeat and heartbeat_interval > 0 and now - last_heartbeat >= heartbeat_interval:
+                on_heartbeat()
+                last_heartbeat = now
+            time.sleep(poll_interval)
 
     def start_control_reader(
         self,

@@ -455,7 +455,6 @@ def record(
     recorder_status = RecorderStatus(state="starting")
     status_lock = threading.Lock()
     last_metric_status_publish = 0.0
-    last_status_heartbeat = 0.0
 
     def publish_status(state: Optional[str] = None, last_error=_LAST_ERROR_UNSET) -> None:
         nonlocal last_metric_status_publish
@@ -497,6 +496,17 @@ def record(
         ui_state["timer_duration_seconds"] = snapshot.duration_seconds
         ui_state["timer_elapsed_seconds"] = snapshot.elapsed_seconds
         ui_state["timer_remaining_seconds"] = snapshot.remaining_seconds
+
+    def on_timer_tick(timer_tick) -> None:
+        apply_timer_snapshot(timer_tick.snapshot)
+        publish_status("recording")
+
+    def on_timer_expired(timer_tick) -> None:
+        apply_timer_snapshot(timer_tick.snapshot)
+        logging.info("Recording timer expired - initiating graceful shutdown")
+        ui_state["recording_status"] = "Timer expired - stopping recording..."
+        publish_status("stopping")
+        live.update(create_enhanced_ui())
     
     def create_enhanced_ui():
         table = Table(show_header=False, box=None, padding=(0, 1))
@@ -877,34 +887,16 @@ def record(
                     apply_timer_snapshot(engine.start_timer())
                     publish_status("recording")
 
+                engine.start_lifecycle_loop(
+                    heartbeat_interval=STATUS_HEARTBEAT_INTERVAL_SECONDS,
+                    on_heartbeat=publish_status,
+                    on_timer_tick=on_timer_tick,
+                    on_timer_expired=on_timer_expired,
+                )
+
                 try:
-                    while engine.is_running():
+                    while not engine.is_stopped():
                         time.sleep(0.1)
-                        now = time.monotonic()
-
-                        if engine.control_stop_requested.is_set():
-                            break
-
-                        if status_writer and now - last_status_heartbeat >= STATUS_HEARTBEAT_INTERVAL_SECONDS:
-                            publish_status()
-                            last_status_heartbeat = now
-
-                        # Update timer state if enabled
-                        if engine.is_timer_enabled():
-                            timer_tick = engine.tick_timer()
-                            if timer_tick.elapsed_changed:
-                                apply_timer_snapshot(timer_tick.snapshot)
-                                publish_status("recording")
-
-                            # Check if timer expired
-                            if timer_tick.expired:
-                                apply_timer_snapshot(timer_tick.snapshot)
-                                logging.info("Recording timer expired - initiating graceful shutdown")
-                                ui_state["recording_status"] = "Timer expired - stopping recording..."
-                                publish_status("stopping")
-                                live.update(create_enhanced_ui())
-                                graceful_shutdown()
-                                break
 
                 except KeyboardInterrupt:
                     raise

@@ -244,6 +244,47 @@ def test_engine_timer_tracks_elapsed_remaining_and_expiry():
     assert expired_tick.snapshot.expired is True
 
 
+def test_engine_lifecycle_stops_when_processing_exits():
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    engine.create_processing_thread(manager, lambda: None)
+    engine.start_processing()
+    engine.wait_processing(timeout=1.0)
+
+    keep_running = engine.run_lifecycle_once()
+
+    assert keep_running is False
+    assert engine.is_stopped() is True
+    assert manager.shutdown_calls == 1
+    assert manager.flush_calls == 1
+
+
+def test_engine_lifecycle_stops_on_timer_expiry():
+    statuses = []
+    timer_ticks = []
+    timer_expiries = []
+    engine = RecorderEngine(
+        make_config(timer_duration_seconds=1),
+        status_publisher=statuses.append,
+    )
+    manager = FakeManager()
+    engine.attach_segment_manager(manager, FakeThread())
+    engine.start_timer(now=-1000.0)
+
+    keep_running = engine.run_lifecycle_once(
+        on_timer_tick=timer_ticks.append,
+        on_timer_expired=timer_expiries.append,
+    )
+
+    assert keep_running is False
+    assert engine.is_stopped() is True
+    assert manager.shutdown_calls == 1
+    assert manager.flush_calls == 1
+    assert timer_expiries
+    assert timer_expiries[0].expired is True
+    assert statuses == ["stopped"]
+
+
 def test_engine_start_processing_requires_configured_thread():
     engine = RecorderEngine(make_config())
 
