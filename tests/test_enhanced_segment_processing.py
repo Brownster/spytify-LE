@@ -80,6 +80,7 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=boundary_result):
             self.segment_manager.process_segments()
+            self.segment_manager.wait_for_exports()
         
         # Verify export was called with corrected audio
         mock_export.assert_called_once()
@@ -113,6 +114,7 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=boundary_result):
             self.segment_manager.process_segments()
+            self.segment_manager.wait_for_exports()
         
         # Verify export was called with corrected boundaries
         mock_export.assert_called_once()
@@ -144,6 +146,7 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=boundary_result):
             with patch('spotify_splitter.segmenter.logger') as mock_logger:
                 self.segment_manager.process_segments()
+                self.segment_manager.wait_for_exports()
                 
                 # Verify warning was logged
                 mock_logger.warning.assert_called_with(
@@ -167,6 +170,7 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=None):
             with patch('spotify_splitter.segmenter.logger') as mock_logger:
                 self.segment_manager.process_segments()
+                self.segment_manager.wait_for_exports()
                 
                 # Verify warning was logged
                 mock_logger.warning.assert_called_with(
@@ -270,6 +274,7 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=boundary_result):
             self.segment_manager.process_segments()
+            self.segment_manager.wait_for_exports()
         
         # With enhanced tolerance (6000ms), the 3000ms difference should be acceptable
         mock_export.assert_called_once()
@@ -339,6 +344,7 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', side_effect=capture_markers):
             with patch('spotify_splitter.segmenter.SegmentManager._export'):
                 self.segment_manager.process_segments()
+                self.segment_manager.wait_for_exports()
         
         # Verify enhanced markers were created correctly
         self.assertIsNotNone(captured_markers)
@@ -418,6 +424,7 @@ class TestSegmentManagerIntegration(unittest.TestCase):
         
         # Process segments
         self.segment_manager.process_segments()
+        self.segment_manager.wait_for_exports()
         
         # Verify export was called
         mock_export.assert_called_once()

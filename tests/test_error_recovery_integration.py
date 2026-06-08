@@ -121,6 +121,7 @@ class TestErrorRecoveryIntegration:
             with patch.object(segment_manager, '_export') as mock_export:
                 # Process segments - should recover from first error
                 segment_manager.process_segments()
+                segment_manager.wait_for_exports()
                 
                 # Verify recovery was attempted and succeeded
                 assert call_count == 2  # First call failed, second succeeded
@@ -378,6 +379,8 @@ class TestErrorRecoveryIntegration:
                     # Process second segment (should recover from export error)
                     if len(segment_manager.track_markers) >= 2:
                         segment_manager.process_segments()
+
+                    segment_manager.wait_for_exports()
         
         # Verify comprehensive error handling occurred
         assert segment_manager.processing_errors > 0 or segment_manager.export_errors > 0

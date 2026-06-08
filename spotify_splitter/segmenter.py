@@ -5,6 +5,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 import logging
 import queue
+import threading
 from typing import List, Optional, Iterable
 
 import numpy as np
@@ -67,6 +68,14 @@ class SegmentWindow:
     start_frame: int
     end_frame: int
     from_ledger: bool
+
+
+@dataclass
+class ExportJob:
+    """A completed track ready for slow export/tag/artwork processing."""
+
+    audio: AudioSegment
+    track_info: TrackInfo
 
 
 class ChunkLedger:
@@ -220,6 +229,15 @@ class SegmentManager:
         self.artwork_session = requests.Session()
         self.playlist_file = None
         self.playlist_tracks = set()  # Track paths already in playlist to prevent duplicates
+        self.export_queue: queue.Queue[ExportJob | object] = queue.Queue(maxsize=2)
+        self._export_stop = object()
+        self._export_worker_stopped = threading.Event()
+        self._export_worker = threading.Thread(
+            target=self._export_worker_loop,
+            name="spoti2-export-worker",
+            daemon=True,
+        )
+        self._export_worker.start()
         if self.playlist_path:
             self.playlist_path.parent.mkdir(parents=True, exist_ok=True)
             mode = "a" if self.playlist_path.exists() else "w"
@@ -344,6 +362,7 @@ class SegmentManager:
 
     def close_playlist(self) -> None:
         """Close post-run resources if open."""
+        self.wait_for_exports()
         if self.playlist_file:
             try:
                 self.playlist_file.close()
@@ -365,8 +384,58 @@ class SegmentManager:
         # Process any pending segments
         while len(self.track_markers) >= 2:
             self.process_segments()
+
+        self.stop_export_worker()
             
         logger.info("Shutdown cleanup complete")
+
+    def _export_worker_loop(self) -> None:
+        """Process queued export jobs on the single export-owned thread."""
+        try:
+            while True:
+                item = self.export_queue.get()
+                try:
+                    if item is self._export_stop:
+                        return
+
+                    assert isinstance(item, ExportJob)
+                    success = self._export_with_error_handling(item.audio, item.track_info)
+                    if success:
+                        self.last_successful_export = item.track_info
+                finally:
+                    self.export_queue.task_done()
+        finally:
+            self._export_worker_stopped.set()
+
+    def _submit_export_job(self, audio: AudioSegment, track_info: TrackInfo) -> bool:
+        """Queue a completed segment for export without blocking audio ingestion."""
+        job = ExportJob(audio=audio, track_info=track_info)
+        warned = False
+
+        while True:
+            try:
+                self.export_queue.put(job, timeout=1.0)
+                return True
+            except queue.Full:
+                if not warned:
+                    logger.warning("Export queue full; continuing audio ingest while waiting")
+                    warned = True
+                self._ingest_audio()
+
+    def wait_for_exports(self) -> None:
+        """Wait until all queued export jobs have completed."""
+        self.export_queue.join()
+
+    def stop_export_worker(self) -> None:
+        """Drain queued exports and stop the export worker."""
+        if self._export_worker_stopped.is_set():
+            return
+        self.wait_for_exports()
+        self.export_queue.put(self._export_stop)
+        self.export_queue.join()
+        self._export_worker.join(timeout=5.0)
+        if not self._export_worker_stopped.is_set():
+            logger.warning("Export worker did not stop within timeout")
 
     # ------------------------------------------------------------------
     # Public API
@@ -774,9 +843,9 @@ class SegmentManager:
                         song_chunk, start_marker.track_info, boundary_result
                     )
                     
-                    # Export with error handling
-                    export_success = self._export_with_error_handling(corrected_chunk, start_marker.track_info)
-                    if not export_success:
+                    # Queue export work off the segment thread.
+                    export_queued = self._submit_export_job(corrected_chunk, start_marker.track_info)
+                    if not export_queued:
                         return False
             else:
                 logger.debug("No expected duration available, saving track")
@@ -785,9 +854,9 @@ class SegmentManager:
                     song_chunk, start_marker.track_info, boundary_result
                 )
                 
-                # Export with error handling
-                export_success = self._export_with_error_handling(corrected_chunk, start_marker.track_info)
-                if not export_success:
+                # Queue export work off the segment thread.
+                export_queued = self._submit_export_job(corrected_chunk, start_marker.track_info)
+                if not export_queued:
                     return False
 
             # Clean up buffer and markers using the cleanup timestamp

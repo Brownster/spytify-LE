@@ -2,6 +2,7 @@ import sys
 import types
 import importlib
 import queue
+import threading
 from pathlib import Path
 import numpy as np
 from pydub import AudioSegment
@@ -46,6 +47,7 @@ def test_process_segments(monkeypatch, tmp_path):
     manager.track_markers.append(TrackMarker(len(manager.continuous_buffer), TrackInfo("A", "T2", "Al", None, "spotify:track:2", 2, 0, 0, None, None)))
 
     manager.process_segments()
+    manager.wait_for_exports()
     assert exported == ["T1"]
 
 
@@ -158,6 +160,7 @@ def test_frame_markers_bridge_to_boundary_detector_ms(monkeypatch, tmp_path):
     monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(len(seg)))
 
     manager.process_segments()
+    manager.wait_for_exports()
 
     assert [marker.timestamp for marker in captured_markers] == [0, 10]
     assert exported == [10]
@@ -208,6 +211,7 @@ def test_ledger_window_matches_legacy_buffer_slice(monkeypatch, tmp_path):
         monkeypatch.setattr(manager.boundary_detector, "detect_boundary", detect_boundary)
         monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(seg))
         manager.process_segments()
+        manager.wait_for_exports()
         return np.array(exported[0].get_array_of_samples()).reshape((-1, 2))
 
     def process_ledger():
@@ -228,6 +232,7 @@ def test_ledger_window_matches_legacy_buffer_slice(monkeypatch, tmp_path):
         monkeypatch.setattr(manager.boundary_detector, "detect_boundary", capture_boundary)
         monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(seg))
         manager.process_segments()
+        manager.wait_for_exports()
         assert captured_marker_offsets == [[10, 40]]
         return np.array(exported[0].get_array_of_samples()).reshape((-1, 2))
 
@@ -236,6 +241,45 @@ def test_ledger_window_matches_legacy_buffer_slice(monkeypatch, tmp_path):
 
     np.testing.assert_array_equal(legacy_samples, expected_samples)
     np.testing.assert_array_equal(ledger_samples, legacy_samples)
+
+
+def test_process_segments_exports_on_worker_and_shutdown_drains(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackMarker = segmenter.TrackMarker
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    manager = SegmentManager(1000, output_dir=tmp_path, fmt="wav")
+    track = TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0, 0, None, None)
+    frames = np.ones((100, 2), dtype="float32") * 0.25
+    manager.chunk_ledger.append_float32(frames)
+    manager.track_markers = [
+        TrackMarker(0, track, 0),
+        TrackMarker(50, track, 50),
+    ]
+
+    export_started = threading.Event()
+    allow_export_finish = threading.Event()
+    exported = []
+
+    def blocking_export(segment, track_info):
+        export_started.set()
+        assert allow_export_finish.wait(timeout=2.0)
+        exported.append((len(segment), track_info.title))
+
+    monkeypatch.setattr(manager.boundary_detector, "detect_boundary", lambda audio, markers: None)
+    monkeypatch.setattr(manager, "_export", blocking_export)
+
+    manager.process_segments()
+
+    assert export_started.wait(timeout=1.0)
+    assert exported == []
+
+    allow_export_finish.set()
+    manager.shutdown_cleanup()
+
+    assert exported == [(50, "T1")]
+    assert manager._export_worker_stopped.is_set()
 
 
 def test_is_song_new_format(monkeypatch):
