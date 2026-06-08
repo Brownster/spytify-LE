@@ -83,6 +83,7 @@ HeartbeatCallback = Callable[[], None]
 TimerCallback = Callable[[TimerTick], None]
 AudioStreamFactory = Callable[[], AudioStreamLike]
 TrackEventRunner = Callable[[Callable[[object], None], Callable[[str], None]], None]
+TagOutputCallback = Callable[[Path, Optional[Path]], None]
 
 
 @dataclass(frozen=True)
@@ -163,9 +164,28 @@ class RecorderEngine:
         self._timer_start: Optional[float] = None
         self._timer_elapsed_seconds = 0
         self._timer_remaining_seconds = self._timer_duration_seconds
+        self._metrics_collector: Optional[object] = None
+        self._performance_dashboard: Optional[object] = None
+        self._performance_optimizer: Optional[object] = None
+        self._tag_output: Optional[TagOutputCallback] = None
+        self._final_diagnostics_enabled = False
 
     def set_status_publisher(self, status_publisher: StatusPublisher) -> None:
         self._status_publisher = status_publisher
+
+    def configure_post_run_cleanup(
+        self,
+        metrics_collector: Optional[object] = None,
+        performance_dashboard: Optional[object] = None,
+        performance_optimizer: Optional[object] = None,
+        tag_output: Optional[TagOutputCallback] = None,
+        final_diagnostics: bool = False,
+    ) -> None:
+        self._metrics_collector = metrics_collector
+        self._performance_dashboard = performance_dashboard
+        self._performance_optimizer = performance_optimizer
+        self._tag_output = tag_output
+        self._final_diagnostics_enabled = final_diagnostics
 
     def attach_segment_manager(
         self,
@@ -427,6 +447,14 @@ class RecorderEngine:
             self._stopped.set()
             self._publish_status("stopped")
 
+    def finalize_post_run(self) -> None:
+        """Run non-realtime cleanup after recording has stopped."""
+        self._stop_performance_optimizer()
+        self._stop_performance_dashboard()
+        self._stop_metrics_collection()
+        self._close_playlist()
+        self._run_tagger()
+
     def handle_command(self, command: dict) -> bool:
         cmd = command.get("cmd")
         if cmd == "stop":
@@ -454,6 +482,8 @@ class RecorderEngine:
                 on_track_change or (lambda _track: None),
                 on_playback_status or (lambda _status: None),
             )
+        except KeyboardInterrupt:
+            logging.debug("MPRIS tracking interrupted")
         except Exception as e:
             logging.error("MPRIS tracking failed: %s", e)
 
@@ -466,3 +496,74 @@ class RecorderEngine:
             logging.debug("Error stopping audio stream: %s", e)
         finally:
             self._audio_stream_entered = False
+
+    def _stop_performance_optimizer(self) -> None:
+        if not self._performance_optimizer:
+            return
+        try:
+            self._performance_optimizer.stop_optimization()
+            logging.info("Performance optimizer stopped")
+        except Exception as e:
+            logging.error("Error stopping performance optimizer: %s", e)
+
+    def _stop_performance_dashboard(self) -> None:
+        if not self._performance_dashboard:
+            return
+        try:
+            self._performance_dashboard.stop_monitoring()
+            logging.info("Performance dashboard stopped")
+        except Exception as e:
+            logging.error("Error stopping performance dashboard: %s", e)
+
+    def _stop_metrics_collection(self) -> None:
+        if not self._metrics_collector:
+            return
+        try:
+            self._metrics_collector.stop_collection()
+            logging.info("Metrics collection stopped")
+            if self._final_diagnostics_enabled:
+                self._log_final_diagnostics()
+        except Exception as e:
+            logging.error("Error stopping metrics collection: %s", e)
+
+    def _log_final_diagnostics(self) -> None:
+        if not self._metrics_collector:
+            return
+        try:
+            report = self._metrics_collector.generate_diagnostic_report()
+            logging.info("Session performance summary:")
+            logging.info("  - Total metrics collected: %s", report.summary.get("total_metrics", 0))
+            logging.info(
+                "  - Collection uptime: %.1fs",
+                report.summary.get("collection_uptime_seconds", 0),
+            )
+            if report.recommendations:
+                logging.info("  - Recommendations:")
+                for recommendation in report.recommendations[:3]:
+                    logging.info("    * %s", recommendation)
+
+            if self._performance_optimizer:
+                suggestions = self._performance_optimizer.get_optimization_suggestions(limit=3)
+                if suggestions:
+                    logging.info("  - Performance optimization suggestions:")
+                    for suggestion in suggestions:
+                        logging.info("    * %s: %s", suggestion.title, suggestion.description)
+        except Exception as e:
+            logging.debug("Error generating final report: %s", e)
+
+    def _close_playlist(self) -> None:
+        if not self._segment_manager or not hasattr(self._segment_manager, "close_playlist"):
+            return
+        try:
+            self._segment_manager.close_playlist()
+        except Exception as e:
+            logging.debug("Error closing playlist: %s", e)
+
+    def _run_tagger(self) -> None:
+        if not self._tag_output:
+            return
+        try:
+            playlist_path = self.config.playlist_path.resolve() if self.config.playlist_path else None
+            self._tag_output(self.config.output_dir, playlist_path)
+        except Exception as e:
+            logging.debug("Error calling tagger API: %s", e)

@@ -79,12 +79,16 @@ class FakeManager:
     def __init__(self):
         self.shutdown_calls = 0
         self.flush_calls = 0
+        self.close_calls = 0
 
     def shutdown_cleanup(self):
         self.shutdown_calls += 1
 
     def flush_cache(self):
         self.flush_calls += 1
+
+    def close_playlist(self):
+        self.close_calls += 1
 
 
 class FakeThread:
@@ -125,6 +129,54 @@ class FakeStream:
 
     def __exit__(self, exc_type, exc, tb):
         self.exit_calls += 1
+
+
+class FakeDiagnosticReport:
+    def __init__(self):
+        self.summary = {
+            "total_metrics": 12,
+            "collection_uptime_seconds": 3.5,
+        }
+        self.recommendations = ["Keep buffer steady"]
+
+
+class FakeMetricsCollector:
+    def __init__(self):
+        self.stop_calls = 0
+        self.report_calls = 0
+
+    def stop_collection(self):
+        self.stop_calls += 1
+
+    def generate_diagnostic_report(self):
+        self.report_calls += 1
+        return FakeDiagnosticReport()
+
+
+class FakePerformanceDashboard:
+    def __init__(self):
+        self.stop_calls = 0
+
+    def stop_monitoring(self):
+        self.stop_calls += 1
+
+
+class FakeSuggestion:
+    title = "Reduce queue pressure"
+    description = "Keep callback work low"
+
+
+class FakePerformanceOptimizer:
+    def __init__(self):
+        self.stop_calls = 0
+        self.suggestion_calls = 0
+
+    def stop_optimization(self):
+        self.stop_calls += 1
+
+    def get_optimization_suggestions(self, limit=3):
+        self.suggestion_calls += 1
+        return [FakeSuggestion()]
 
 
 def test_engine_creates_runtime_queues_from_config():
@@ -201,6 +253,42 @@ def test_engine_start_unwinds_stream_on_partial_startup_failure(monkeypatch):
     assert manager.shutdown_calls == 1
     assert manager.flush_calls == 1
     assert engine.is_stopped() is True
+
+
+def test_engine_finalize_post_run_stops_components_and_tags_output():
+    tag_calls = []
+    playlist_path = Path("/tmp/session.m3u")
+    engine = RecorderEngine(make_config(playlist_path=playlist_path))
+    manager = FakeManager()
+    metrics = FakeMetricsCollector()
+    dashboard = FakePerformanceDashboard()
+    optimizer = FakePerformanceOptimizer()
+    engine.attach_segment_manager(manager, FakeThread())
+    engine.configure_post_run_cleanup(
+        metrics_collector=metrics,
+        performance_dashboard=dashboard,
+        performance_optimizer=optimizer,
+        tag_output=lambda output_dir, playlist: tag_calls.append((output_dir, playlist)),
+        final_diagnostics=True,
+    )
+
+    engine.finalize_post_run()
+
+    assert optimizer.stop_calls == 1
+    assert dashboard.stop_calls == 1
+    assert metrics.stop_calls == 1
+    assert metrics.report_calls == 1
+    assert optimizer.suggestion_calls == 1
+    assert manager.close_calls == 1
+    assert tag_calls == [(Path("/tmp/out"), playlist_path)]
+
+
+def test_engine_finalize_post_run_tolerates_missing_components():
+    engine = RecorderEngine(make_config())
+
+    engine.finalize_post_run()
+
+    assert engine.is_stopped() is False
 
 
 def test_engine_running_predicates_track_processing_and_cleanup():

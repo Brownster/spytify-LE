@@ -745,6 +745,13 @@ def record(
     ui_state["adaptive_adjustments"] = 0
     ui_state["emergency_expansions"] = 0
     engine.set_status_publisher(publish_status)
+    engine.configure_post_run_cleanup(
+        metrics_collector=metrics_collector,
+        performance_dashboard=performance_dashboard,
+        performance_optimizer=performance_optimizer,
+        tag_output=tag_output,
+        final_diagnostics=effective_debug,
+    )
     publish_status("waiting")
 
     def graceful_shutdown() -> None:
@@ -896,66 +903,8 @@ def record(
             except Exception as e:
                 logging.debug(f"Error during shutdown cleanup: {e}")
 
-        # Stop performance monitoring components
-        if performance_optimizer:
-            try:
-                performance_optimizer.stop_optimization()
-                logging.info("Performance optimizer stopped")
-            except Exception as e:
-                logging.error(f"Error stopping performance optimizer: {e}")
-        
-        if performance_dashboard:
-            try:
-                performance_dashboard.stop_monitoring()
-                logging.info("Performance dashboard stopped")
-            except Exception as e:
-                logging.error(f"Error stopping performance dashboard: {e}")
-        
-        # Stop metrics collection
-        if metrics_collector:
-            try:
-                metrics_collector.stop_collection()
-                logging.info("Metrics collection stopped")
-                
-                # Generate final diagnostic report if debug mode is enabled
-                if effective_debug:
-                    try:
-                        report = metrics_collector.generate_diagnostic_report()
-                        logging.info("Session performance summary:")
-                        logging.info(f"  - Total metrics collected: {report.summary.get('total_metrics', 0)}")
-                        logging.info(f"  - Collection uptime: {report.summary.get('collection_uptime_seconds', 0):.1f}s")
-                        if report.recommendations:
-                            logging.info("  - Recommendations:")
-                            for rec in report.recommendations[:3]:  # Show top 3 recommendations
-                                logging.info(f"    * {rec}")
-                        
-                        # Show optimization suggestions if available
-                        if performance_optimizer:
-                            suggestions = performance_optimizer.get_optimization_suggestions(limit=3)
-                            if suggestions:
-                                logging.info("  - Performance optimization suggestions:")
-                                for suggestion in suggestions:
-                                    logging.info(f"    * {suggestion.title}: {suggestion.description}")
-                                    
-                    except Exception as e:
-                        logging.debug(f"Error generating final report: {e}")
-                        
-            except Exception as e:
-                logging.error(f"Error stopping metrics collection: {e}")
-        
-        if 'manager' in locals():
-            try:
-                manager.close_playlist()
-            except Exception as e:
-                logging.debug(f"Error closing playlist: {e}")
-
-        # Invoke tagging API on shutdown
-        try:
-            # Make playlist path absolute if it exists
-            absolute_playlist_path = playlist_path.resolve() if playlist_path else None
-            tag_output(Path(out_dir) if out_dir else OUTPUT_DIR, absolute_playlist_path)
-        except Exception as e:
-            logging.debug(f"Error calling tagger API: {e}")
+        if 'engine' in locals():
+            engine.finalize_post_run()
 
         logging.info("Done.")
 
