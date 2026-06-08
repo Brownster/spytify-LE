@@ -139,6 +139,9 @@ Now localized behind the engine boundary.
 or near zero, and per-track export no longer correlates with frame drops on the *next*
 track. Long-session CPU/memory flat (no O(n²) growth).
 
+**Design note:** see `docs/pass2-pipeline-design.md` for the planned chunk ledger,
+export queue, backpressure policy, thread ownership, and shutdown ordering.
+
 ---
 
 ## Pass 3 — Streamline
@@ -152,6 +155,10 @@ track. Long-session CPU/memory flat (no O(n²) growth).
   `performance_optimizer` (never applies anything). Keep lightweight counters only.
 - [ ] **Merge the two `AudioStream` classes** once the callbacks are identical; handle
   "stream died → restart" at the supervisor level.
+- [ ] **Remove dead callback scaffolding:** `_perform_adaptive_management`,
+  `_handle_callback_status`, `_process_audio_data`, `_handle_buffer_overflow`,
+  `_handle_callback_error`, and their callback-only counters/locks after stream-level
+  recovery is separated from callback-era metrics.
 - [ ] **Split oversized modules:** pull embedded HTML/CSS/JS out of `service_app.py`
   (1339 lines) into a template file; break up `main.py`, `segmenter.py`, `audio.py`
   along the new engine seams.
