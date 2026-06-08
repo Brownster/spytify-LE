@@ -120,6 +120,45 @@ def test_ledger_mirror_channel_mismatch_does_not_break_ingest(monkeypatch, tmp_p
     assert "channel mismatch" in caplog.text
 
 
+def test_frame_markers_bridge_to_boundary_detector_ms(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackMarker = segmenter.TrackMarker
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    audio_q = queue.Queue()
+    manager = SegmentManager(44100, output_dir=tmp_path, fmt="wav", audio_queue=audio_q)
+    track = TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0, 0, None, None)
+
+    audio_q.put(np.ones((882, 2), dtype="float32") * 0.1)
+    manager._ingest_audio()
+    manager._clear_continuous_buffer()
+    audio_q.put(np.ones((882, 2), dtype="float32") * 0.2)
+    manager._ingest_audio()
+
+    manager.track_markers = [
+        TrackMarker(0, track, 882),
+        TrackMarker(10, track, 1323),
+    ]
+    exported = []
+    captured_markers = []
+
+    def detect_boundary(audio, markers):
+        captured_markers.extend(markers)
+        return None
+
+    monkeypatch.setattr(manager.boundary_detector, "detect_boundary", detect_boundary)
+    monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(len(seg)))
+
+    manager.process_segments()
+
+    assert [marker.timestamp for marker in captured_markers] == [0, 10]
+    assert exported == [10]
+    assert manager.continuous_buffer_start_frame == 1323
+    assert manager.track_markers[0].timestamp == 0
+    assert manager.track_markers[0].frame == 1323
+
+
 def test_is_song_new_format(monkeypatch):
     segmenter = load_segmenter(monkeypatch)
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo

@@ -47,7 +47,8 @@ def is_song(track: TrackInfo) -> bool:
 # Core classes
 # ---------------------------------------------------------------------------
 
-TrackMarker = namedtuple("TrackMarker", "timestamp track_info")
+TrackMarker = namedtuple("TrackMarker", "timestamp track_info frame")
+TrackMarker.__new__.__defaults__ = (None,)
 
 
 @dataclass
@@ -364,10 +365,15 @@ class SegmentManager:
                         self.first_track_seen = True
                         # Clear buffer and start fresh
                         self._clear_continuous_buffer()
-                        marker = TrackMarker(0, data)
+                        marker = TrackMarker(0, data, self.chunk_ledger.total_frames)
                         self.track_markers = [marker]
                     else:
-                        marker = TrackMarker(len(self.continuous_buffer), data)
+                        marker_timestamp = len(self.continuous_buffer)
+                        marker = TrackMarker(
+                            marker_timestamp,
+                            data,
+                            self._buffer_ms_to_frame(marker_timestamp),
+                        )
                         self.track_markers.append(marker)
                         logger.debug("Marker added for track: %s", data.title)
                         self.process_segments()
@@ -433,6 +439,20 @@ class SegmentManager:
         """Convert a continuous_buffer-relative millisecond offset to an absolute frame."""
         return self._buffer_start_frame() + self._ms_to_frames(milliseconds)
 
+    def _marker_frame(self, marker: TrackMarker) -> int:
+        """Return a marker's absolute frame, deriving it from ms for legacy callers."""
+        if marker.frame is not None:
+            return marker.frame
+        return self._buffer_ms_to_frame(marker.timestamp)
+
+    def _marker_ms(self, marker: TrackMarker) -> int:
+        """Return a marker offset relative to continuous_buffer in milliseconds."""
+        return self._frames_to_ms(self._marker_frame(marker) - self._buffer_start_frame())
+
+    def _rebase_marker_after_drop(self, marker: TrackMarker, dropped_ms: int) -> TrackMarker:
+        """Rebase a legacy marker timestamp while preserving absolute frame position."""
+        return marker._replace(timestamp=max(0, marker.timestamp - dropped_ms))
+
     def process_segments(self) -> None:
         """Process the first complete segment using enhanced boundary detection with grace period and continuity validation."""
         if len(self.track_markers) < 2:
@@ -440,10 +460,12 @@ class SegmentManager:
 
         start_marker = self.track_markers[0]
         end_marker = self.track_markers[1]
+        start_ms = self._marker_ms(start_marker)
+        end_ms = self._marker_ms(end_marker)
 
         if not is_song(start_marker.track_info):
             logger.debug("Previous item was not a song, skipping segment.")
-            self._drop_continuous_buffer_before(end_marker.timestamp)
+            self._drop_continuous_buffer_before(end_ms)
             self.track_markers.pop(0)
             return
 
@@ -584,14 +606,16 @@ class SegmentManager:
         """
         try:
             # Convert to enhanced track markers for boundary detection
+            start_ms = self._marker_ms(start_marker)
+            end_ms = self._marker_ms(end_marker)
             enhanced_markers = [
                 EnhancedTrackMarker(
-                    timestamp=start_marker.timestamp,
+                    timestamp=start_ms,
                     track_info=start_marker.track_info,
                     confidence=1.0
                 ),
                 EnhancedTrackMarker(
-                    timestamp=end_marker.timestamp,
+                    timestamp=end_ms,
                     track_info=end_marker.track_info,
                     confidence=1.0
                 )
@@ -605,8 +629,8 @@ class SegmentManager:
             if not boundary_result:
                 logger.warning("Boundary detection failed for track: %s", start_marker.track_info.title)
                 # Fallback to original timestamp-based cutting
-                song_chunk = self.continuous_buffer[start_marker.timestamp : end_marker.timestamp]
-                cleanup_timestamp = end_marker.timestamp
+                song_chunk = self.continuous_buffer[start_ms : end_ms]
+                cleanup_timestamp = end_ms
             else:
                 # Use enhanced boundary detection results
                 logger.debug(
@@ -678,7 +702,7 @@ class SegmentManager:
             # Clean up buffer and markers using the cleanup timestamp
             self._drop_continuous_buffer_before(cleanup_timestamp)
             self.track_markers = [
-                marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
+                self._rebase_marker_after_drop(marker, cleanup_timestamp)
                 for marker in self.track_markers[1:]
             ]
             
@@ -1043,7 +1067,7 @@ class SegmentManager:
                 # Reduce buffer size temporarily if possible
                 if hasattr(self, 'continuous_buffer') and len(self.continuous_buffer) > 60000:  # > 1 minute
                     # Keep only the last 30 seconds plus current segment
-                    segment_duration = end_marker.timestamp - start_marker.timestamp
+                    segment_duration = self._marker_ms(end_marker) - self._marker_ms(start_marker)
                     keep_duration = max(30000, segment_duration + 10000)  # 30s or segment + 10s buffer
                     
                     trim_point = len(self.continuous_buffer) - keep_duration
@@ -1052,7 +1076,7 @@ class SegmentManager:
                         
                         # Adjust markers
                         self.track_markers = [
-                            marker._replace(timestamp=max(0, marker.timestamp - trim_point))
+                            self._rebase_marker_after_drop(marker, trim_point)
                             for marker in self.track_markers
                         ]
                         
@@ -1086,14 +1110,20 @@ class SegmentManager:
                     return False
                 
                 # Validate segment boundaries
-                if start_marker.timestamp >= len(self.continuous_buffer):
+                start_ms = self._marker_ms(start_marker)
+                end_ms = self._marker_ms(end_marker)
+
+                if start_ms >= len(self.continuous_buffer):
                     logger.warning("Start marker beyond buffer length")
                     return False
                     
-                if end_marker.timestamp > len(self.continuous_buffer):
+                if end_ms > len(self.continuous_buffer):
                     logger.warning("End marker beyond buffer length, adjusting")
                     # Adjust end marker to buffer length
-                    adjusted_marker = end_marker._replace(timestamp=len(self.continuous_buffer))
+                    adjusted_marker = end_marker._replace(
+                        timestamp=len(self.continuous_buffer),
+                        frame=self._buffer_ms_to_frame(len(self.continuous_buffer)),
+                    )
                     # Update the marker in the list
                     for i, marker in enumerate(self.track_markers):
                         if marker == end_marker:
@@ -1206,7 +1236,9 @@ class SegmentManager:
             # Simplified processing without advanced features
             try:
                 # Use basic timestamp-based cutting without boundary detection
-                song_chunk = self.continuous_buffer[start_marker.timestamp : end_marker.timestamp]
+                start_ms = self._marker_ms(start_marker)
+                end_ms = self._marker_ms(end_marker)
+                song_chunk = self.continuous_buffer[start_ms : end_ms]
                 
                 if len(song_chunk) == 0:
                     logger.warning("Empty audio chunk in graceful degradation")
@@ -1220,10 +1252,10 @@ class SegmentManager:
                 
                 if degraded_success:
                     # Clean up buffer and markers
-                    cleanup_timestamp = end_marker.timestamp
+                    cleanup_timestamp = end_ms
                     self._drop_continuous_buffer_before(cleanup_timestamp)
                     self.track_markers = [
-                        marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
+                        self._rebase_marker_after_drop(marker, cleanup_timestamp)
                         for marker in self.track_markers[1:]
                     ]
                     
@@ -1378,10 +1410,10 @@ class SegmentManager:
                 })
 
         # Clean up buffer and markers to continue with next track
-        cleanup_timestamp = end_marker.timestamp
+        cleanup_timestamp = self._marker_ms(end_marker)
         self._drop_continuous_buffer_before(cleanup_timestamp)
         self.track_markers = [
-            marker._replace(timestamp=marker.timestamp - cleanup_timestamp)
+            self._rebase_marker_after_drop(marker, cleanup_timestamp)
             for marker in self.track_markers[1:]
         ]
         
