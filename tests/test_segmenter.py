@@ -86,6 +86,8 @@ def test_continuous_buffer_origin_tracks_clear_and_drop(monkeypatch, tmp_path):
 
     assert len(manager.continuous_buffer) == 0
     assert manager.continuous_buffer_start_frame == 882
+    assert manager.chunk_ledger.base_frame == 882
+    assert manager.chunk_ledger.retained_frames == 0
     assert manager._buffer_ms_to_frame(0) == 882
 
     audio_q.put(np.ones((882, 2), dtype="float32") * 0.5)
@@ -94,7 +96,28 @@ def test_continuous_buffer_origin_tracks_clear_and_drop(monkeypatch, tmp_path):
 
     assert len(manager.continuous_buffer) == 10
     assert manager.continuous_buffer_start_frame == 1323
+    assert manager.chunk_ledger.base_frame == 1323
+    assert manager.chunk_ledger.retained_frames == 441
     assert manager._buffer_ms_to_frame(10) == 1764
+
+
+def test_ledger_mirror_channel_mismatch_does_not_break_ingest(monkeypatch, tmp_path, caplog):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+
+    audio_q = queue.Queue()
+    manager = SegmentManager(44100, output_dir=tmp_path, fmt="wav", audio_queue=audio_q)
+
+    audio_q.put(np.ones((441, 2), dtype="float32") * 0.25)
+    manager._ingest_audio()
+    audio_q.put(np.ones((441, 1), dtype="float32") * 0.5)
+
+    manager._ingest_audio()
+
+    assert len(manager.continuous_buffer) == 20
+    assert manager.chunk_ledger.total_frames == 441
+    assert manager.chunk_ledger.retained_frames == 441
+    assert "channel mismatch" in caplog.text
 
 
 def test_is_song_new_format(monkeypatch):

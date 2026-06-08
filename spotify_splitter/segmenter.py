@@ -272,11 +272,21 @@ class SegmentManager:
         """Clear the legacy pydub buffer and record its absolute frame origin."""
         self.continuous_buffer = AudioSegment.empty()
         self.continuous_buffer_start_frame = self.chunk_ledger.total_frames
+        self._discard_ledger_before_buffer_start()
 
     def _drop_continuous_buffer_before(self, milliseconds: int) -> None:
         """Drop legacy buffer audio before a millisecond offset and advance its origin."""
         self.continuous_buffer = self.continuous_buffer[milliseconds:]
         self.continuous_buffer_start_frame += self._ms_to_frames(milliseconds)
+        self._discard_ledger_before_buffer_start()
+
+    def _discard_ledger_before_buffer_start(self) -> None:
+        """Keep the transition ledger bounded to the legacy buffer window."""
+        discard_frame = min(
+            self.continuous_buffer_start_frame,
+            self.chunk_ledger.total_frames,
+        )
+        self.chunk_ledger.discard_before(discard_frame)
         
     def flush_cache(self) -> None:
         """Clear all cached data for clean startup."""
@@ -398,6 +408,13 @@ class SegmentManager:
                     samplerate=self.samplerate,
                     channels=frames.shape[1],
                 )
+            else:
+                logger.warning(
+                    "Skipping chunk ledger mirror for channel mismatch: expected %d, got %d",
+                    self.chunk_ledger.channels,
+                    frames.shape[1],
+                )
+                return
         self.chunk_ledger.append_float32(frames)
 
     def _frames_to_ms(self, frames: int) -> int:
