@@ -397,7 +397,7 @@ class SegmentManager:
                         marker = TrackMarker(
                             marker_timestamp,
                             data,
-                            self._buffer_ms_to_frame(marker_timestamp),
+                            self.chunk_ledger.total_frames,
                         )
                         self.track_markers.append(marker)
                         logger.debug("Marker added for track: %s", data.title)

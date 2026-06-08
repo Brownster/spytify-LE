@@ -167,6 +167,77 @@ def test_frame_markers_bridge_to_boundary_detector_ms(monkeypatch, tmp_path):
     assert manager.track_markers[0].frame == 1323
 
 
+def test_ledger_window_matches_legacy_buffer_slice(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackMarker = segmenter.TrackMarker
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+    BoundaryResult = importlib.import_module("spotify_splitter.track_boundary_detector").BoundaryResult
+
+    track = TrackInfo("A", "T1", "Al", None, "spotify:track:1", 1, 0, 0, None, None)
+    frames = (np.arange(200, dtype="float32").reshape(100, 2) / 200) - 0.5
+    expected_samples = (np.clip(frames[45:65], -1.0, 1.0) * np.iinfo(np.int16).max).astype(np.int16)
+
+    def configure_detector(manager):
+        manager.boundary_detector.grace_period_ms = 4
+        manager.boundary_detector.max_correction_ms = 4
+        manager.boundary_detector.continuity_validator.window_size_ms = 2
+
+    def detect_boundary(audio, markers):
+        return BoundaryResult(
+            start_frame=markers[0].timestamp + 5,
+            end_frame=markers[1].timestamp - 5,
+            confidence=1.0,
+            continuity_valid=True,
+            grace_period_applied=False,
+            correction_applied=False,
+        )
+
+    def process_legacy():
+        manager = SegmentManager(1000, output_dir=tmp_path / "legacy", fmt="wav")
+        configure_detector(manager)
+        int_samples = (np.clip(frames, -1.0, 1.0) * np.iinfo(np.int16).max).astype(np.int16)
+        manager.continuous_buffer = AudioSegment(
+            int_samples.tobytes(),
+            frame_rate=1000,
+            sample_width=2,
+            channels=2,
+        )
+        manager.track_markers = [TrackMarker(40, track), TrackMarker(70, track)]
+        exported = []
+        monkeypatch.setattr(manager.boundary_detector, "detect_boundary", detect_boundary)
+        monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(seg))
+        manager.process_segments()
+        return np.array(exported[0].get_array_of_samples()).reshape((-1, 2))
+
+    def process_ledger():
+        manager = SegmentManager(1000, output_dir=tmp_path / "ledger", fmt="wav")
+        configure_detector(manager)
+        manager.chunk_ledger.append_float32(frames)
+        manager.track_markers = [
+            TrackMarker(40, track, 40),
+            TrackMarker(70, track, 70),
+        ]
+        exported = []
+        captured_marker_offsets = []
+
+        def capture_boundary(audio, markers):
+            captured_marker_offsets.append([marker.timestamp for marker in markers])
+            return detect_boundary(audio, markers)
+
+        monkeypatch.setattr(manager.boundary_detector, "detect_boundary", capture_boundary)
+        monkeypatch.setattr(manager, "_export", lambda seg, t: exported.append(seg))
+        manager.process_segments()
+        assert captured_marker_offsets == [[10, 40]]
+        return np.array(exported[0].get_array_of_samples()).reshape((-1, 2))
+
+    legacy_samples = process_legacy()
+    ledger_samples = process_ledger()
+
+    np.testing.assert_array_equal(legacy_samples, expected_samples)
+    np.testing.assert_array_equal(ledger_samples, legacy_samples)
+
+
 def test_is_song_new_format(monkeypatch):
     segmenter = load_segmenter(monkeypatch)
     TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
