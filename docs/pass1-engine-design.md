@@ -137,7 +137,10 @@ The lifecycle/heartbeat loop owns:
 
 `wait()` blocks until the engine reaches stopped state. It waits on the stopped event
 and must not swallow `KeyboardInterrupt`; the CLI wrapper needs to receive Ctrl-C and
-call `engine.stop(flush=True)`. `run()` is only `start()` followed by `wait()`.
+call `engine.stop(flush=True)`. For headless/subprocess callers, `run()` should be
+`start()` followed by `wait()` and `finalize_post_run()` so tagger and metrics cleanup
+cannot be forgotten. The interactive CLI performs the same sequence through its render
+loop and `finally` block.
 
 Thread joins are explicit:
 
