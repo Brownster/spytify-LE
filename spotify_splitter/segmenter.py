@@ -44,6 +44,15 @@ def is_song(track: TrackInfo) -> bool:
     )
 
 
+class IncompleteTrackSkip(Exception):
+    """Signal that a segment was intentionally skipped (incomplete / too short to save).
+
+    This is not an error: the buffer/markers are advanced past the segment and the
+    caller treats it as a no-op rather than a processing failure (no retries, no
+    error logging, no ``last_error``).
+    """
+
+
 # ---------------------------------------------------------------------------
 # Core classes
 # ---------------------------------------------------------------------------
@@ -598,6 +607,24 @@ class SegmentManager:
         end_frame = max(start_frame, min(end_frame, window.end_frame))
         return self.chunk_ledger.to_audio_segment(start_frame, end_frame)
 
+    def _advance_after_segment(
+        self, end_marker: TrackMarker, window: SegmentWindow, cleanup_ms: int
+    ) -> None:
+        """Drop processed audio up to the next marker and rebase remaining markers."""
+        if window.from_ledger:
+            retain_frame = max(
+                self.chunk_ledger.base_frame,
+                self._marker_frame(end_marker) - self._boundary_context_frames(),
+            )
+            dropped_ms = self._drop_audio_before_frame(retain_frame)
+        else:
+            self._drop_continuous_buffer_before(cleanup_ms)
+            dropped_ms = cleanup_ms
+        self.track_markers = [
+            self._rebase_marker_after_drop(marker, dropped_ms)
+            for marker in self.track_markers[1:]
+        ]
+
     def process_segments(self) -> None:
         """Process the first complete segment using enhanced boundary detection with grace period and continuity validation."""
         if len(self.track_markers) < 2:
@@ -640,7 +667,10 @@ class SegmentManager:
                 self._handle_processing_failure(start_marker, end_marker)
         else:
             # Process without error recovery (legacy mode)
-            self._process_segment_internal(start_marker, end_marker)
+            try:
+                self._process_segment_internal(start_marker, end_marker)
+            except IncompleteTrackSkip:
+                pass  # incomplete track skipped; buffer/markers already advanced
 
     def _process_segment_with_recovery(self, start_marker: TrackMarker, end_marker: TrackMarker) -> bool:
         """
@@ -681,7 +711,11 @@ class SegmentManager:
                     else:
                         logger.error("Segment processing failed after all attempts: %s", start_marker.track_info.title)
                         return False
-                        
+
+            except IncompleteTrackSkip:
+                # Intentional skip (incomplete/too short): buffer & markers already
+                # advanced. Not a failure — do not retry or report.
+                return True
             except Exception as e:
                 self.processing_errors += 1
                 self.recovery_attempts += 1
@@ -823,15 +857,16 @@ class SegmentManager:
             if expected_duration_ms > 0:
                 duration_diff = abs(actual_duration_ms - expected_duration_ms)
                 if duration_diff > tolerance_ms:
-                    logger.warning(
-                        "Track duration mismatch too large (expected %dms, got %dms, diff %dms). Skipping save.",
-                        expected_duration_ms, actual_duration_ms, duration_diff
+                    logger.info(
+                        "Skipping incomplete track '%s' (captured %dms of expected %dms)",
+                        start_marker.track_info.title, actual_duration_ms, expected_duration_ms,
                     )
-                    # Validate frame integrity before skipping
                     is_valid, diagnostic = self.boundary_detector.validate_frame_integrity()
                     if not is_valid:
-                        logger.warning("Frame integrity issue detected: %s", diagnostic)
-                    return False  # Processing failed due to duration mismatch
+                        logger.debug("Frame integrity note while skipping: %s", diagnostic)
+                    # Advance past the incomplete segment; this is a skip, not a failure.
+                    self._advance_after_segment(end_marker, window, cleanup_ms)
+                    raise IncompleteTrackSkip(start_marker.track_info.title)
                 else:
                     logger.debug(
                         "Duration validation passed (expected %dms, got %dms, diff %dms)",
@@ -859,22 +894,11 @@ class SegmentManager:
                     return False
 
             # Clean up buffer and markers using the cleanup timestamp
-            if window.from_ledger:
-                retain_frame = max(
-                    self.chunk_ledger.base_frame,
-                    self._marker_frame(end_marker) - self._boundary_context_frames(),
-                )
-                dropped_ms = self._drop_audio_before_frame(retain_frame)
-            else:
-                self._drop_continuous_buffer_before(cleanup_ms)
-                dropped_ms = cleanup_ms
-            self.track_markers = [
-                self._rebase_marker_after_drop(marker, dropped_ms)
-                for marker in self.track_markers[1:]
-            ]
-            
+            self._advance_after_segment(end_marker, window, cleanup_ms)
             return True
-            
+
+        except IncompleteTrackSkip:
+            raise  # Intentional skip; handled by the caller without error logging
         except Exception as e:
             logger.error("Error in internal segment processing: %s", e)
             raise  # Re-raise for error recovery handling

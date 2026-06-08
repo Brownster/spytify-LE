@@ -310,20 +310,55 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
             correction_applied=False
         )
         
-        # Mock frame integrity validation to return failure
+        # An incomplete track (large duration mismatch) is skipped, not failed.
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=boundary_result):
-            with patch.object(self.segment_manager.boundary_detector, 'validate_frame_integrity', 
-                            return_value=(False, "Frame loss detected: 100 frames missing")):
+            with patch.object(self.segment_manager.boundary_detector, 'validate_frame_integrity',
+                            return_value=(False, "Frame loss detected: 100 frames missing")) as mock_integrity:
                 with patch('spotify_splitter.segmenter.logger') as mock_logger:
                     self.segment_manager.process_segments()
-                    
-                    # Verify frame integrity warning was logged
-                    mock_logger.warning.assert_any_call("Frame integrity issue detected: %s", 
-                                                      "Frame loss detected: 100 frames missing")
-        
+
+                    # Frame integrity is still consulted while skipping...
+                    mock_integrity.assert_called()
+                    # ...and the skip is reported at INFO (not a WARNING/ERROR failure).
+                    assert any(
+                        "Skipping incomplete track" in str(c.args[0])
+                        for c in mock_logger.info.call_args_list
+                    ), "expected an INFO 'Skipping incomplete track' log"
+
         # Export should not be called due to large duration mismatch
         mock_export.assert_not_called()
+        # A skip must not be reported to the UI as a processing failure.
+        for call in self.segment_manager.ui_callback.call_args_list:
+            assert call.args[0] != "processing_failure", "skip wrongly reported as failure"
     
+    @patch('spotify_splitter.segmenter.SegmentManager._export')
+    def test_incomplete_track_skipped_without_retry(self, mock_export):
+        """An incomplete track is skipped once: no retry loop, no failure callback."""
+        self.segment_manager.continuous_buffer = self.test_audio  # only 5s captured
+        long_track = self.track_info._replace(duration_ms=180000)  # but track is 3 min
+        self.segment_manager.track_markers = [
+            TrackMarker(0, long_track),
+            TrackMarker(5000, long_track),
+        ]
+        boundary_result = BoundaryResult(
+            start_frame=0, end_frame=5000, confidence=0.9,
+            continuity_valid=True, grace_period_applied=False, correction_applied=False,
+        )
+
+        with patch.object(self.segment_manager.boundary_detector, 'detect_boundary',
+                          return_value=boundary_result) as mock_detect:
+            self.segment_manager.process_segments()
+
+        # Skipped before export, and evaluated exactly once (no 4x retry of a
+        # deterministically-rejected segment).
+        mock_export.assert_not_called()
+        self.assertEqual(mock_detect.call_count, 1)
+        # Reported as a benign skip, never as a processing failure.
+        actions = [c.args[0] for c in self.ui_callback.call_args_list]
+        self.assertNotIn("processing_failure", actions)
+        # The segment was advanced past, leaving a single marker.
+        self.assertEqual(len(self.segment_manager.track_markers), 1)
+
     def test_enhanced_track_marker_conversion(self):
         """Test conversion from TrackMarker to EnhancedTrackMarker."""
         # Set up test data
