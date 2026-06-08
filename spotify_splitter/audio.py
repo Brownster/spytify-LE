@@ -167,8 +167,6 @@ class EnhancedAudioStream(AudioStream):
         # Stream state tracking
         self.reconnection_attempts = 0
         self.max_reconnection_attempts = 5
-        self.last_callback_time = 0.0
-        self.callback_count = 0
         self.emergency_expansions = 0
         
         # Performance metrics
@@ -239,94 +237,6 @@ class EnhancedAudioStream(AudioStream):
         """
         AudioStream._callback(self, indata, frames, time_info, status)
     
-    def _handle_callback_status(self, status):
-        """Handle sounddevice status messages in callback."""
-        logger.warning("SoundDevice status in adaptive callback: %s", status)
-        
-        # Notify UI callback if available
-        if self.ui_callback:
-            self.ui_callback("buffer_warning", {"status": str(status)})
-        
-        # Handle specific status types
-        status_str = str(status)
-        if "overflow" in status_str.lower():
-            with self._lock:
-                self.metrics['buffer_overflows'] += 1
-            self.buffer_manager.record_overflow()
-            
-            # Attempt emergency buffer expansion
-            if self.enable_adaptive_management:
-                self._attempt_emergency_expansion()
-                
-        elif "underrun" in status_str.lower():
-            with self._lock:
-                self.metrics['buffer_underruns'] += 1
-            self.buffer_manager.record_underrun()
-    
-    def _perform_adaptive_management(self):
-        """Perform adaptive buffer management during callback."""
-        try:
-            # Monitor current buffer utilization
-            metrics = self.buffer_manager.monitor_utilization(self.q)
-            
-            # Record latency measurement
-            if self.last_callback_time > 0:
-                callback_interval = time.time() - self.last_callback_time
-                self.buffer_manager.record_latency(callback_interval)
-            
-            # Check if buffer adjustment is needed
-            new_size = self.buffer_manager.adjust_buffer_size(metrics)
-            
-            # Apply buffer size changes if needed (note: this requires stream restart)
-            current_maxsize = getattr(self.q, 'maxsize', 0)
-            if new_size != current_maxsize and abs(new_size - current_maxsize) > 10:
-                logger.debug("Buffer size adjustment needed: %d -> %d", current_maxsize, new_size)
-                # Note: Actual queue resizing would require stream restart in a real implementation
-                # For now, we log the recommendation
-                
-        except Exception as e:
-            logger.error("Error in adaptive management: %s", e)
-    
-    def _process_audio_data(self, indata, frames):
-        """Process and queue audio data with error handling."""
-        try:
-            # Copy audio data
-            audio_copy = indata.copy()
-            
-            # Attempt to queue the data
-            self.q.put_nowait(audio_copy)
-            
-        except Full:
-            # Buffer is full - handle overflow
-            self._handle_buffer_overflow()
-            
-        except Exception as e:
-            logger.error("Error processing audio data: %s", e)
-            with self._lock:
-                self.metrics['dropped_frames'] += frames
-    
-    def _handle_buffer_overflow(self):
-        """Handle buffer overflow situations."""
-        logger.warning("Audio buffer overflow in enhanced stream")
-        
-        with self._lock:
-            self.metrics['buffer_overflows'] += 1
-            self.metrics['dropped_frames'] += 1  # Approximate frame count
-        
-        # Record overflow in buffer manager
-        self.buffer_manager.record_overflow()
-        
-        # Notify UI callback
-        if self.ui_callback:
-            self.ui_callback("buffer_overflow", {
-                "queue_size": self.q.qsize(),
-                "max_size": getattr(self.q, 'maxsize', 0)
-            })
-        
-        # Attempt emergency expansion if enabled
-        if self.enable_adaptive_management:
-            self._attempt_emergency_expansion()
-    
     def _attempt_emergency_expansion(self):
         """Attempt emergency buffer expansion."""
         try:
@@ -350,16 +260,6 @@ class EnhancedAudioStream(AudioStream):
         except Exception as e:
             logger.error("Error during emergency buffer expansion: %s", e)
             return False
-    
-    def _handle_callback_error(self, error: Exception):
-        """Handle errors that occur in the audio callback."""
-        context = "audio_callback"
-        recovery_action = self.error_recovery.handle_error(error, context)
-        
-        logger.error("Callback error handled: %s -> %s", type(error).__name__, recovery_action.value)
-        
-        # Note: Actual recovery would be handled outside the callback
-        # to avoid blocking the audio thread
     
     def handle_stream_error(self, error: Exception) -> bool:
         """
@@ -821,9 +721,7 @@ class EnhancedAudioStream(AudioStream):
         queue_maxsize = getattr(self.q, 'maxsize', 0)
         queue_utilization = (queue_size / queue_maxsize) if queue_maxsize > 0 else 0.0
         
-        # Add callback performance metrics
-        callback_metrics = {
-            'callback_count': self.callback_count,
+        stream_metrics = {
             'queue_size': queue_size,
             'queue_maxsize': queue_maxsize,
             'queue_utilization_percent': queue_utilization * 100,
@@ -832,7 +730,7 @@ class EnhancedAudioStream(AudioStream):
         }
         
         # Combine with existing metrics
-        current_metrics.update(callback_metrics)
+        current_metrics.update(stream_metrics)
         
         # Add buffer health if available
         if self.enable_adaptive_management:

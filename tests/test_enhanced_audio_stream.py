@@ -96,7 +96,6 @@ class TestEnhancedAudioStreamIntegration:
         
         # Verify audio was queued without callback-side bookkeeping
         assert enhanced_stream.q.qsize() == 1
-        assert enhanced_stream.callback_count == 0
         assert enhanced_stream.metrics['total_frames'] == 0
     
     def test_adaptive_callback_with_status_warning(self, enhanced_stream):
@@ -120,8 +119,8 @@ class TestEnhancedAudioStreamIntegration:
         assert enhanced_stream.buffer_manager.overflow_count == 0
         ui_callback.assert_called_once_with("buffer_warning", None)
     
-    def test_buffer_overflow_handling(self, enhanced_stream):
-        """Test buffer overflow handling and emergency expansion."""
+    def test_callback_overflow_warns_without_adaptive_recovery(self, enhanced_stream):
+        """Test callback overflow stays minimal and does not run adaptive recovery."""
         # Fill the queue to capacity
         for _ in range(enhanced_stream.q.maxsize):
             enhanced_stream.q.put(np.zeros((1024, 2)))
@@ -129,13 +128,15 @@ class TestEnhancedAudioStreamIntegration:
         # Mock audio data that will cause overflow
         indata = np.random.random((1024, 2)).astype(np.float32)
         frames = 1024
+        ui_callback = Mock()
+        enhanced_stream.ui_callback = ui_callback
         
-        # Process audio data (should trigger overflow handling)
-        enhanced_stream._process_audio_data(indata, frames)
+        enhanced_stream._adaptive_callback(indata, frames, Mock(), None)
         
-        # Verify overflow was handled
-        assert enhanced_stream.metrics['buffer_overflows'] >= 1
-        assert enhanced_stream.buffer_manager.overflow_count >= 1
+        # The real-time callback only warns; recovery/metrics stay off-thread.
+        assert enhanced_stream.metrics['buffer_overflows'] == 0
+        assert enhanced_stream.buffer_manager.overflow_count == 0
+        ui_callback.assert_called_once_with("buffer_warning", None)
     
     def test_emergency_buffer_expansion(self, enhanced_stream):
         """Test emergency buffer expansion mechanism."""
@@ -151,21 +152,16 @@ class TestEnhancedAudioStreamIntegration:
         assert enhanced_stream.metrics['emergency_expansions'] == 1
     
     def test_adaptive_management_integration(self, enhanced_stream):
-        """Test integration between adaptive management components."""
+        """Test buffer health can be sampled outside the callback."""
         # Simulate high buffer utilization
         for _ in range(int(enhanced_stream.q.maxsize * 0.8)):
             enhanced_stream.q.put(np.zeros((1024, 2)))
-        
-        # Perform adaptive management
-        enhanced_stream._perform_adaptive_management()
-        
-        # Verify metrics were collected
-        assert len(enhanced_stream.buffer_manager.utilization_history) > 0
-        
+
         # Get buffer health
         health = enhanced_stream.get_buffer_health()
         assert health is not None
         assert isinstance(health, BufferHealth)
+        assert len(enhanced_stream.buffer_manager.utilization_history) > 0
     
     def test_error_recovery_integration(self, enhanced_stream):
         """Test error recovery integration with stream operations."""
@@ -263,14 +259,12 @@ class TestEnhancedAudioStreamIntegration:
         time_info = Mock()
         status = None
 
-        with patch.object(enhanced_stream, '_perform_adaptive_management') as adaptive_management, \
-             patch.object(enhanced_stream, '_handle_callback_error') as callback_error, \
-             patch.object(enhanced_stream, '_process_audio_data') as process_audio:
-            enhanced_stream._adaptive_callback(indata, frames, time_info, status)
+        enhanced_stream._adaptive_callback(indata, frames, time_info, status)
 
-        adaptive_management.assert_not_called()
-        callback_error.assert_not_called()
-        process_audio.assert_not_called()
+        assert not hasattr(enhanced_stream, "_perform_adaptive_management")
+        assert not hasattr(enhanced_stream, "_handle_callback_error")
+        assert not hasattr(enhanced_stream, "_process_audio_data")
+        assert not hasattr(enhanced_stream, "_handle_buffer_overflow")
         assert enhanced_stream.q.qsize() == 1
 
 
@@ -320,12 +314,13 @@ class TestEnhancedAudioStreamStressTests:
         
         # Verify callbacks queued up to capacity without callback-side metrics
         assert stress_test_stream.q.qsize() == stress_test_stream.q.maxsize
-        assert stress_test_stream.callback_count == 0
         assert stress_test_stream.metrics['total_frames'] == 0
     
-    def test_buffer_overflow_recovery_cycle(self, stress_test_stream):
-        """Test repeated buffer overflow and recovery cycles."""
+    def test_callback_overflow_cycle_stays_enqueue_only(self, stress_test_stream):
+        """Test repeated callback overflows do not run recovery on the callback path."""
         overflow_cycles = 5
+        ui_callback = Mock()
+        stress_test_stream.ui_callback = ui_callback
         
         for cycle in range(overflow_cycles):
             # Fill buffer to capacity
@@ -335,17 +330,21 @@ class TestEnhancedAudioStreamStressTests:
                 except Full:
                     break
             
-            # Trigger overflow handling
-            stress_test_stream._handle_buffer_overflow()
+            stress_test_stream._adaptive_callback(
+                np.zeros((1024, 2), dtype=np.float32),
+                1024,
+                Mock(),
+                None,
+            )
             
             # Clear some space
             for _ in range(10):
                 if not stress_test_stream.q.empty():
                     stress_test_stream.q.get_nowait()
         
-        # Verify overflow handling occurred
-        assert stress_test_stream.metrics['buffer_overflows'] >= overflow_cycles
-        assert stress_test_stream.buffer_manager.overflow_count >= overflow_cycles
+        assert stress_test_stream.metrics['buffer_overflows'] == 0
+        assert stress_test_stream.buffer_manager.overflow_count == 0
+        assert ui_callback.call_count == overflow_cycles
     
     def test_concurrent_callback_processing(self, stress_test_stream):
         """Test thread safety under concurrent callback processing."""
@@ -375,7 +374,6 @@ class TestEnhancedAudioStreamStressTests:
         
         # Verify all callbacks queued audio without callback-side metrics
         assert stress_test_stream.q.qsize() == thread_count
-        assert stress_test_stream.callback_count == 0
         assert stress_test_stream.metrics['total_frames'] == 0
     
     def test_memory_usage_under_load(self, stress_test_stream):
