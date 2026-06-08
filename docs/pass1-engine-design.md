@@ -114,8 +114,9 @@ render loops can poll `is_running()` / `status()` immediately. The ordered start
    before starting worker threads.
 3. Start the segment-processing thread.
 4. Start the optional buffer-health monitor thread.
-5. Start the MPRIS tracking thread with engine-owned `on_change` / `on_status`
-   callbacks that update engine facts and emit observer events.
+5. Start the MPRIS tracking thread. During the transitional slice, the engine owns
+   the thread while the CLI still supplies callbacks that map facts to display/status;
+   those callbacks move behind engine events when `status()` lands.
 6. Start the optional stdin control reader if configured.
 7. Start timer state when `timer_duration_seconds` is configured.
 8. Start the engine lifecycle/heartbeat loop thread, then return from `start()`.

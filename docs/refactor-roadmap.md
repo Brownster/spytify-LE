@@ -102,9 +102,11 @@ split, thread ownership, and migration steps.
 **Extraction progress:** `spotify_splitter.engine` now defines domain exceptions,
 `RecorderEngineConfig`, and the first `RecorderEngine` runtime shell. `record()` builds
 the resolved config before constructing the current pipeline, and the engine now owns
-runtime queues, the segment-processing thread lifecycle, the stdin control reader,
-timer tick state, and the lifecycle/heartbeat loop that drives timer expiry and
-normal-exit cleanup through the guarded stop/control path.
+runtime queues, stream context entry/exit, the segment-processing thread lifecycle,
+MPRIS and buffer-health thread startup, the stdin control reader, timer tick state,
+and the lifecycle/heartbeat loop that drives timer expiry and normal-exit cleanup
+through the guarded stop/control path. `start()` now unwinds an entered stream on
+partial startup failure.
 
 ---
 
@@ -147,6 +149,9 @@ track. Long-session CPU/memory flat (no O(n²) growth).
 - [ ] **Split oversized modules:** pull embedded HTML/CSS/JS out of `service_app.py`
   (1339 lines) into a template file; break up `main.py`, `segmenter.py`, `audio.py`
   along the new engine seams.
+- [ ] **Single-thread Rich rendering:** keep `Live.update()` on the CLI/main thread by
+  rendering from engine status snapshots instead of updating Rich from MPRIS,
+  processing, and lifecycle callbacks.
 
 **Acceptance:** net line count down materially; each module has a single clear job; no
 behaviour regression in the suite or a real recording check.
