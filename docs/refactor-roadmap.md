@@ -71,18 +71,20 @@ Python 3.14, no numpy).
 Extract the engine and the structured channels. Structure changes; pipeline internals
 do **not** yet.
 
-- [ ] Create `RecorderEngine` (new module, e.g. `spotify_splitter/engine.py`) that owns:
-  audio stream lifecycle, MPRIS subscription, the segment manager, and start/stop/pause/resume.
+- [x] Create `RecorderEngine` (new module, e.g. `spotify_splitter/engine.py`) that owns:
+  audio stream lifecycle, MPRIS subscription, the segment manager, and start/stop.
+  Cooperative pause/resume remains deferred.
 - [x] Define **structured recorder state** (dataclass): `state`, `current_track`,
   `tracks_recorded`, `timer_*`, `dropped_frames`, `queue_depth`, `last_error`.
-- [ ] **Status channel:** engine writes state to a JSON file (atomic write) on change/tick.
-- [ ] **Control channel:** engine accepts start/stop/pause/resume/reconfigure commands
-  as newline-delimited JSON from stdin when run as the web-owned subprocess.
-- [ ] CLI `record` becomes a thin wrapper over `RecorderEngine`.
-- [ ] Web service reads the status channel instead of grepping `recorder.log`
+- [x] **Status channel:** engine writes state to a JSON file (atomic write) on change/tick.
+- [x] **Control channel:** engine accepts graceful stop commands as newline-delimited
+  JSON from stdin when run as the web-owned subprocess. Pause/resume remain
+  signal-based until cooperative pause state lands.
+- [x] CLI `record` becomes a thin wrapper over `RecorderEngine`.
+- [x] Web service reads the status channel instead of grepping `recorder.log`
   (`service_app.py` `_serve_logs`/status), and sends control commands instead of
   raw `SIGSTOP`/`SIGCONT`/process kill where practical.
-- [ ] Confirm **all shutdown paths** (Ctrl-C, timer expiry, web stop, restart) flush
+- [x] Confirm **all shutdown paths** (Ctrl-C, timer expiry, web stop, restart) flush
   buffers and finalize the active track via one shared cleanup routine. *(timer/Ctrl-C
   already unified in `main.py`; extend to the web/stop path.)*
 
@@ -91,10 +93,10 @@ longer parses logs for status, and shutdown is provably single-pathed. Tests upd
 the new seams, green.
 
 **Progress:** `spotify_splitter.recorder_status` defines the schema and atomic JSON
-writer. The current `record` command can write it with `--status-file`; engine and
-web-service `/status` now consumes it with supervisor-owned lifecycle state. Engine
-extraction remains open. Stdin NDJSON control is wired for graceful stop; pause/resume
-remain signal-based until `RecorderEngine` owns cooperative pause state.
+writer. The current `record` command writes it with `--status-file`, web-service
+`/status` consumes it with supervisor-owned lifecycle state, and stdin NDJSON control
+is wired for graceful stop. Pause/resume remain signal-based until `RecorderEngine`
+owns cooperative pause state.
 
 **Design note:** see `docs/pass1-engine-design.md` for the planned engine API, state
 split, thread ownership, and migration steps.
@@ -109,7 +111,8 @@ through the guarded stop/control path. `start()` now unwinds an entered stream o
 partial startup failure. CLI rendering now calls `Live.update()` only from the main
 thread render loop; background callbacks only mutate state and publish status. Post-run
 cleanup for metrics/dashboard/optimizer shutdown, playlist close, and external tagging
-now runs through the engine.
+now runs through the engine. Service-launched recorder subprocesses run through the
+headless `engine.run()` path (`start()` + `wait()` + `finalize_post_run()`).
 
 ---
 
