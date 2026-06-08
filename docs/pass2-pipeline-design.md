@@ -91,13 +91,25 @@ should treat it as `frame`.
 The existing `TrackBoundaryDetector` works with `AudioSegment` millisecond indexes. To
 avoid rewriting it in the same slice:
 
-1. compute the candidate frame window for `start_marker` to `end_marker`
-2. include the existing grace window in frames
+1. compute the candidate frame window from `start_marker.frame` to
+   `end_marker.frame`
+2. expand that window by the detector grace margin on both sides, clamped to the
+   retained ledger range
 3. materialize that candidate window once as an `AudioSegment`
-4. pass detector markers converted to millisecond offsets relative to the candidate
-5. convert the detector result back to absolute frame offsets for ledger cleanup
+4. pass detector markers converted to millisecond offsets relative to the
+   materialized window, not relative to the whole session
+5. treat `BoundaryResult.start_frame` and `BoundaryResult.end_frame` as
+   millisecond offsets into that materialized window, then convert them back to
+   absolute frame offsets for export slicing and ledger cleanup
 
 This keeps the detector contract stable while removing the growing session buffer.
+
+Because the detector validates continuity around both adjusted boundaries, the
+materialized window must include enough pre/post-roll for the current grace period
+and correction search. After a segment is accepted, ledger cleanup must retain any
+audio still needed as look-back context for the next marker. The initial policy is to
+discard before `end_marker.frame - context_frames`, not before the exported segment
+end, so the next segment can still materialize its start-grace/correction window.
 
 ## Export Jobs
 
