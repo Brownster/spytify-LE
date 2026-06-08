@@ -231,39 +231,13 @@ class EnhancedAudioStream(AudioStream):
     
     def _adaptive_callback(self, indata, frames, time_info, status):
         """
-        Enhanced audio callback with adaptive buffer management and health monitoring.
-        
-        This callback extends the base functionality with:
-        - Real-time buffer utilization monitoring
-        - Dynamic buffer size adjustment
-        - Emergency buffer expansion
-        - Error recovery handling
+        Real-time audio callback.
+
+        Keep this path equivalent to AudioStream._callback: copy the incoming
+        block and enqueue it without adaptive sampling, metrics, or locks.
+        Health sampling runs from monitor threads outside the PortAudio thread.
         """
-        callback_start_time = time.time()
-        
-        with self._lock:
-            self.callback_count += 1
-            self.last_callback_time = callback_start_time
-        
-        try:
-            # Handle status warnings/errors
-            if status:
-                self._handle_callback_status(status)
-            
-            # Monitor buffer health if adaptive management is enabled
-            if self.enable_adaptive_management:
-                self._perform_adaptive_management()
-            
-            # Process audio data
-            self._process_audio_data(indata, frames)
-            
-            # Update performance metrics
-            with self._lock:
-                self.metrics['total_frames'] += frames
-            
-        except Exception as e:
-            logger.error("Error in adaptive callback: %s", e)
-            self._handle_callback_error(e)
+        AudioStream._callback(self, indata, frames, time_info, status)
     
     def _handle_callback_status(self, status):
         """Handle sounddevice status messages in callback."""

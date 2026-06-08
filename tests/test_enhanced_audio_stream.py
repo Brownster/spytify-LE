@@ -84,7 +84,7 @@ class TestEnhancedAudioStreamIntegration:
         assert enhanced_stream.emergency_expansions == 0
     
     def test_adaptive_callback_basic_functionality(self, enhanced_stream):
-        """Test that adaptive callback processes audio data correctly."""
+        """Test that adaptive callback only queues audio data."""
         # Mock audio data
         indata = np.random.random((1024, 2)).astype(np.float32)
         frames = 1024
@@ -94,10 +94,10 @@ class TestEnhancedAudioStreamIntegration:
         # Call the adaptive callback
         enhanced_stream._adaptive_callback(indata, frames, time_info, status)
         
-        # Verify audio was queued
+        # Verify audio was queued without callback-side bookkeeping
         assert enhanced_stream.q.qsize() == 1
-        assert enhanced_stream.callback_count == 1
-        assert enhanced_stream.metrics['total_frames'] == frames
+        assert enhanced_stream.callback_count == 0
+        assert enhanced_stream.metrics['total_frames'] == 0
     
     def test_adaptive_callback_with_status_warning(self, enhanced_stream):
         """Test adaptive callback handling of status warnings."""
@@ -114,10 +114,11 @@ class TestEnhancedAudioStreamIntegration:
         # Call the adaptive callback
         enhanced_stream._adaptive_callback(indata, frames, time_info, status)
         
-        # Verify overflow was handled
-        assert enhanced_stream.metrics['buffer_overflows'] == 1
-        assert enhanced_stream.buffer_manager.overflow_count == 1
-        ui_callback.assert_called()
+        # Verify the status warning was surfaced without adaptive work
+        assert enhanced_stream.q.qsize() == 1
+        assert enhanced_stream.metrics['buffer_overflows'] == 0
+        assert enhanced_stream.buffer_manager.overflow_count == 0
+        ui_callback.assert_called_once_with("buffer_warning", None)
     
     def test_buffer_overflow_handling(self, enhanced_stream):
         """Test buffer overflow handling and emergency expansion."""
@@ -255,22 +256,22 @@ class TestEnhancedAudioStreamIntegration:
             with enhanced_stream as stream:
                 assert stream is enhanced_stream
     
-    def test_callback_error_handling(self, enhanced_stream):
-        """Test error handling within the adaptive callback."""
-        # Mock an error in adaptive management
-        with patch.object(enhanced_stream, '_perform_adaptive_management', 
-                         side_effect=Exception("Management error")):
-            
-            indata = np.random.random((1024, 2)).astype(np.float32)
-            frames = 1024
-            time_info = Mock()
-            status = None
-            
-            # Callback should handle the error gracefully
+    def test_callback_does_not_run_adaptive_work(self, enhanced_stream):
+        """Test that adaptive work stays off the PortAudio callback thread."""
+        indata = np.random.random((1024, 2)).astype(np.float32)
+        frames = 1024
+        time_info = Mock()
+        status = None
+
+        with patch.object(enhanced_stream, '_perform_adaptive_management') as adaptive_management, \
+             patch.object(enhanced_stream, '_handle_callback_error') as callback_error, \
+             patch.object(enhanced_stream, '_process_audio_data') as process_audio:
             enhanced_stream._adaptive_callback(indata, frames, time_info, status)
-            
-            # Verify error was recorded
-            assert len(enhanced_stream.error_recovery.error_history) > 0
+
+        adaptive_management.assert_not_called()
+        callback_error.assert_not_called()
+        process_audio.assert_not_called()
+        assert enhanced_stream.q.qsize() == 1
 
 
 class TestEnhancedAudioStreamStressTests:
@@ -317,9 +318,10 @@ class TestEnhancedAudioStreamStressTests:
             indata = np.random.random((frames_per_callback, 2)).astype(np.float32)
             stress_test_stream._adaptive_callback(indata, frames_per_callback, Mock(), None)
         
-        # Verify all callbacks were processed
-        assert stress_test_stream.callback_count == callback_count
-        assert stress_test_stream.metrics['total_frames'] == callback_count * frames_per_callback
+        # Verify callbacks queued up to capacity without callback-side metrics
+        assert stress_test_stream.q.qsize() == stress_test_stream.q.maxsize
+        assert stress_test_stream.callback_count == 0
+        assert stress_test_stream.metrics['total_frames'] == 0
     
     def test_buffer_overflow_recovery_cycle(self, stress_test_stream):
         """Test repeated buffer overflow and recovery cycles."""
@@ -371,9 +373,10 @@ class TestEnhancedAudioStreamStressTests:
         for thread in threads:
             thread.join(timeout=5.0)
         
-        # Verify all callbacks were processed
-        assert stress_test_stream.callback_count == thread_count
-        assert stress_test_stream.metrics['total_frames'] == thread_count * 1024
+        # Verify all callbacks queued audio without callback-side metrics
+        assert stress_test_stream.q.qsize() == thread_count
+        assert stress_test_stream.callback_count == 0
+        assert stress_test_stream.metrics['total_frames'] == 0
     
     def test_memory_usage_under_load(self, stress_test_stream):
         """Test memory usage remains stable under sustained load."""
@@ -463,17 +466,17 @@ class TestEnhancedAudioStreamErrorScenarios:
         error_types = [e.error_type for e in error_prone_stream.error_recovery.error_history]
         assert all(error_type == "Exception" for error_type in error_types)
     
-    def test_callback_exception_handling(self, error_prone_stream):
-        """Test exception handling within callback processing."""
+    def test_callback_queue_exception_does_not_enter_recovery(self, error_prone_stream):
+        """Test callback queue failures stay minimal and do not run recovery."""
         # Mock queue to raise exception
         with patch.object(error_prone_stream.q, 'put_nowait', side_effect=Exception("Queue error")):
             indata = np.random.random((1024, 2)).astype(np.float32)
             
-            # Callback should handle exception gracefully
-            error_prone_stream._adaptive_callback(indata, 1024, Mock(), None)
+            with pytest.raises(Exception, match="Queue error"):
+                error_prone_stream._adaptive_callback(indata, 1024, Mock(), None)
             
-            # Verify error was handled
-            assert error_prone_stream.metrics['dropped_frames'] > 0
+            assert error_prone_stream.metrics['dropped_frames'] == 0
+            assert len(error_prone_stream.error_recovery.error_history) == 0
     
     def test_reconnection_attempt_limit(self, error_prone_stream):
         """Test that reconnection attempts are limited."""

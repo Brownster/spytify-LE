@@ -127,7 +127,7 @@ Now localized behind the engine boundary.
 - [ ] **Decouple export:** capture/segment loop only drains the audio queue and cuts
   boundaries; finished `(slice, track_info)` jobs go to an **export worker queue**.
   ffmpeg/LastFM/artwork run there, never blocking capture.
-- [ ] **Slim the callback:** `EnhancedAudioStream._adaptive_callback` → enqueue only.
+- [x] **Slim the callback:** `EnhancedAudioStream._adaptive_callback` → enqueue only.
   Move health sampling to the existing 1 s monitor thread. Drop the no-op adaptive
   resize (`audio.py` ~310).
 - [ ] **Hard limits/timeouts** confirmed around metadata, artwork, tagging, export
