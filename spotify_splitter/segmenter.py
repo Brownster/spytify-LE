@@ -103,6 +103,7 @@ class SegmentManager:
         self.bundle_track_number = 1
         self.bundle_album_art_uri = bundle_album_art_uri  # Custom artwork URI for bundle playlists
         self.bundle_album_art = None  # Store unified album art for bundle playlists
+        self.artwork_session = requests.Session()
         self.playlist_file = None
         self.playlist_tracks = set()  # Track paths already in playlist to prevent duplicates
         if self.playlist_path:
@@ -187,13 +188,17 @@ class SegmentManager:
         logger.debug("Cache flush complete")
 
     def close_playlist(self) -> None:
-        """Close the playlist file if open."""
+        """Close post-run resources if open."""
         if self.playlist_file:
             try:
                 self.playlist_file.close()
             except Exception:
                 pass
             self.playlist_file = None
+        try:
+            self.artwork_session.close()
+        except Exception:
+            pass
         
     def shutdown_cleanup(self) -> None:
         """Clean shutdown - process any remaining tracks."""
@@ -587,6 +592,10 @@ class SegmentManager:
                 num_prefix = f"{t.track_number} - "
         return folder / f"{num_prefix}{safe_title}.{self.format}"
 
+    def _download_artwork(self, uri: str) -> bytes:
+        """Download cover artwork through the manager's pooled session."""
+        return self.artwork_session.get(uri, timeout=10).content
+
     def _export(self, segment: Iterable | AudioSegment, track_info: TrackInfo) -> None:
         """Export ``segment`` to disk and tag it with metadata."""
         if self.bundle_playlist:
@@ -700,21 +709,19 @@ class SegmentManager:
                             if self.bundle_album_art_uri:
                                 # Use custom artwork URL if provided
                                 logger.info("Downloading custom album art for bundle playlist from: %s", self.bundle_album_art_uri)
-                                self.bundle_album_art = requests.get(
-                                    self.bundle_album_art_uri, timeout=10
-                                ).content
+                                self.bundle_album_art = self._download_artwork(
+                                    self.bundle_album_art_uri
+                                )
                             else:
                                 # Fall back to first track's artwork
                                 logger.info("Downloading first track's album art for bundle playlist")
-                                self.bundle_album_art = requests.get(
-                                    track_info.art_uri, timeout=10
-                                ).content
+                                self.bundle_album_art = self._download_artwork(track_info.art_uri)
                         # Use the stored unified album art for all tracks
                         img = self.bundle_album_art
                         logger.debug("Using unified album art for bundle track")
                     else:
                         # For non-bundle playlists, download individual track artwork
-                        img = requests.get(track_info.art_uri, timeout=10).content
+                        img = self._download_artwork(track_info.art_uri)
 
                     audio.add(APIC(3, "image/jpeg", 3, "Front cover", img))
                 except Exception as e:

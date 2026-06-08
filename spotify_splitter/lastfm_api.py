@@ -334,6 +334,7 @@ class LastFMAPI:
 
 # Global instance (can be configured with custom API key)
 _global_lastfm_client: Optional[LastFMAPI] = None
+_global_lastfm_api_key: Optional[str] = None
 
 
 def get_lastfm_client(api_key: Optional[str] = None) -> LastFMAPI:
@@ -341,14 +342,17 @@ def get_lastfm_client(api_key: Optional[str] = None) -> LastFMAPI:
     Get or create the global LastFM API client.
 
     Args:
-        api_key: Optional API key to use. If provided, creates new client.
+        api_key: Optional API key to use. Reuses the current client when the
+            effective API key has not changed.
 
     Returns:
         LastFM API client instance
     """
-    global _global_lastfm_client
+    global _global_lastfm_api_key, _global_lastfm_client
 
-    if api_key or _global_lastfm_client is None:
+    effective_api_key = api_key or DEFAULT_API_KEY
+    if _global_lastfm_client is None or effective_api_key != _global_lastfm_api_key:
         _global_lastfm_client = LastFMAPI(api_key=api_key)
+        _global_lastfm_api_key = effective_api_key
 
     return _global_lastfm_client

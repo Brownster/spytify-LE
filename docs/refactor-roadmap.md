@@ -132,7 +132,7 @@ Now localized behind the engine boundary.
   resize (`audio.py` ~310).
 - [ ] **Hard limits/timeouts** confirmed around metadata, artwork, tagging, export
   (artwork timeouts already added; verify LastFM + ffmpeg have bounds).
-- [ ] **Reuse a `requests.Session`** for artwork; ensure the LastFM client (already
+- [x] **Reuse a `requests.Session`** for artwork; ensure the LastFM client (already
   caches) is reused, not re-created per track.
 
 **Acceptance:** measured drop — dropped-frame count on a back-to-back-track session at

@@ -246,3 +246,57 @@ def test_bundle_playlist_track_numbers(monkeypatch, tmp_path):
     assert expected2.exists()
     assert captures[0]["tracknumber"] == "1"
     assert captures[1]["tracknumber"] == "2"
+
+
+def test_artwork_download_uses_manager_session(monkeypatch, tmp_path):
+    segmenter = load_segmenter(monkeypatch)
+    SegmentManager = segmenter.SegmentManager
+    TrackInfo = importlib.import_module("spotify_splitter.mpris").TrackInfo
+
+    manager = SegmentManager(samplerate=44100, output_dir=tmp_path, fmt="wav")
+    track = TrackInfo(
+        "Artist",
+        "Title",
+        "Album",
+        "https://example.com/art.jpg",
+        "spotify:track:1",
+        1,
+        0,
+        0,
+        None,
+        None,
+    )
+
+    calls = []
+
+    class FakeEasyID3(dict):
+        def __init__(self, path=None):
+            pass
+
+        def save(self, path):
+            pass
+
+    class FakeID3:
+        def add(self, *args, **kwargs):
+            pass
+
+        def save(self):
+            pass
+
+    monkeypatch.setattr(segmenter, "EasyID3", FakeEasyID3)
+    monkeypatch.setattr(segmenter, "ID3", lambda path: FakeID3())
+    monkeypatch.setattr(
+        AudioSegment,
+        "export",
+        lambda self, path, format=None, bitrate=None: Path(path).touch(),
+    )
+    monkeypatch.setattr(
+        manager.artwork_session,
+        "get",
+        lambda url, timeout=None: calls.append((url, timeout))
+        or types.SimpleNamespace(content=b"image-data"),
+    )
+
+    manager._export(np.ones((2, 2), dtype="float32"), track)
+
+    assert calls == [("https://example.com/art.jpg", 10)]
