@@ -286,6 +286,35 @@ pactl list sources | grep -E "Name:|Description:"
 spotify-splitter record --player spotify
 ```
 
+### "Spotify sink not found" (Spotify Flatpak / PipeWire)
+
+Recent Spotify Flatpak builds (≈1.2.89+) connect to audio over PipeWire's
+**native protocol**. PipeWire's PulseAudio-compatibility layer then strips the
+`application.name`/`spotify` identifiers from the `pactl` sink-input view, so
+older versions of this tool failed with `Spotify sink not found – is music playing?`
+even while Spotify was clearly playing.
+
+Auto-detection now handles this by cross-referencing `pw-dump` (the native
+PipeWire view, which still carries the Spotify identity), so on current versions
+it should just work. If detection still can't find the stream, point it at the
+capture source explicitly:
+
+```bash
+# Inspect what PipeWire/PulseAudio expose
+pw-dump | grep -A2 '"application.name": "spotify"'   # the native node
+pactl list sink-inputs | grep node.name              # its pulse-compat node.name
+pactl list sources short                             # monitor sources
+
+# Record from a specific source/device (PortAudio device name or PulseAudio source)
+spotify-splitter record --monitor audio-src
+spotify-splitter record --source alsa_output.pci-0000_00_1f.3.analog-stereo.monitor
+```
+
+> **Note:** the capturable PortAudio device name may differ from the PulseAudio
+> source name. On native-PipeWire setups the Spotify stream node (e.g. `audio-src`)
+> is often what PortAudio can open, while the `.monitor` name may not resolve —
+> if one fails to open, try the other.
+
 ### Audio Quality Issues
 
 If tracks sound distorted or have wrong speed:
