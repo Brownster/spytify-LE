@@ -671,7 +671,6 @@ class SegmentManager:
                                 "attempts": attempt + 1
                             })
                     
-                    self.last_successful_export = start_marker.track_info
                     return True
                 else:
                     # Processing returned False but didn't raise exception

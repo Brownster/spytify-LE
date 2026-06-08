@@ -214,8 +214,18 @@ download artwork.
 Keep the existing export error policy during Pass 2:
 
 - tag/art/LastFM failures are non-fatal
-- export failures follow the current `_export_with_error_handling()` path
-- a failed export records/logs the failure and the worker advances to the next job
+- export failures follow the current `_export_with_error_handling()` path on the
+  export worker
+- a failed export records/logs the failure, emits the existing `export_error` and
+  `degraded_export` UI callbacks where applicable, and the worker advances to the
+  next job
+
+After the export worker split, segment processing success means "the export job was
+accepted by the queue", not "the file exists on disk". The segment thread discards
+ledger audio after queueing so it can keep capturing back-to-back tracks; it does not
+re-cut a segment after a persistent export failure. This is an intentional reliability
+tradeoff: export retries and degraded export still happen on the worker, but capture
+must not stall behind ffmpeg, tagging, LastFM, or artwork failures.
 
 Do not add broad new recovery branches in this pass. Pass 3 will simplify that code.
 
