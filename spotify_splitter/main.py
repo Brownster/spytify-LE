@@ -34,7 +34,7 @@ from .recorder_status import (
     TimerStatus,
     TrackStatus,
 )
-from .util import get_spotify_stream_info
+from .util import get_spotify_stream_info, stream_info_for_source
 from .tagging_api import tag_output
 from .user_config import (
     DEFAULT_CONFIG,
@@ -215,6 +215,14 @@ def record(
         "--control-stdin",
         help="Read newline-delimited JSON control commands from stdin.",
     ),
+    monitor: str = typer.Option(
+        None,
+        "--monitor",
+        "--source",
+        help="Capture source/device name to record from, overriding auto-detection. "
+        "Accepts a PortAudio input device or a PulseAudio source. "
+        "List candidates with: pactl list sources short  (or check 'pactl list sink-inputs' node.name).",
+    ),
 ):
     """Start recording until interrupted."""
     config = ctx.obj.get("config", DEFAULT_CONFIG.copy())
@@ -252,6 +260,7 @@ def record(
     max_duration = resolve_param("max_duration", max_duration)
     status_file = resolve_param("status_file", status_file)
     control_stdin = resolve_param("control_stdin", control_stdin)
+    monitor = resolve_param("monitor", monitor)
 
     if spotifyd_mode:
         player = "spotifyd"
@@ -277,7 +286,10 @@ def record(
             raise typer.Exit(code=1)
 
     try:
-        info = get_spotify_stream_info()
+        if monitor:
+            info = stream_info_for_source(monitor)
+        else:
+            info = get_spotify_stream_info()
     except RuntimeError as e:
         logging.error(f"Error finding audio source: {e}")
         raise typer.Exit(code=1)
