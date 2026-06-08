@@ -24,7 +24,7 @@ from .metrics_collector import MetricsCollector
 from .performance_dashboard import PerformanceDashboard, DashboardConfig
 from .performance_optimizer import PerformanceOptimizer
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
-from .engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig
+from .engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig, RecorderError
 from .segmenter import SegmentManager, OUTPUT_DIR
 from .mpris import track_events
 from .recorder_status import (
@@ -506,7 +506,6 @@ def record(
         logging.info("Recording timer expired - initiating graceful shutdown")
         ui_state["recording_status"] = "Timer expired - stopping recording..."
         publish_status("stopping")
-        live.update(create_enhanced_ui())
     
     def create_enhanced_ui():
         table = Table(show_header=False, box=None, padding=(0, 1))
@@ -699,8 +698,6 @@ def record(
                 for rec in recommendations[:3]:  # Show top 3
                     logging.critical(f"  - {rec}")
         
-        live.update(create_enhanced_ui())
-
     manager = SegmentManager(
         samplerate=info.samplerate,
         output_dir=engine_config.output_dir,
@@ -819,7 +816,6 @@ def record(
                 else:
                     ui_state["recording_status"] = f"Recording: {track.artist} - {track.title}"
                 publish_status("recording")
-                live.update(create_enhanced_ui())
                 event_queue.put(("track_change", track))
 
             def on_status(status: str):
@@ -829,7 +825,6 @@ def record(
                 elif status == "Paused":
                     ui_state["recording_status"] = "Playback paused"
                     publish_status("paused")
-                live.update(create_enhanced_ui())
 
             def monitor_buffer_health():
                 if effective_adaptive and buffer_manager:
@@ -856,21 +851,25 @@ def record(
                     player_name=player,
                 )
 
-            engine.start(
-                manager=manager,
-                processing_target=manager.run,
-                stream_factory=create_audio_stream,
-                track_event_runner=run_track_events,
-                on_track_change=on_change,
-                on_playback_status=on_status,
-                health_monitor_target=monitor_buffer_health if effective_adaptive and buffer_manager else None,
-                control_input_stream=sys.stdin if control_stdin else None,
-                on_control_stop_requested=on_control_stop_requested,
-                heartbeat_interval=STATUS_HEARTBEAT_INTERVAL_SECONDS,
-                on_heartbeat=publish_status,
-                on_timer_tick=on_timer_tick,
-                on_timer_expired=on_timer_expired,
-            )
+            try:
+                engine.start(
+                    manager=manager,
+                    processing_target=manager.run,
+                    stream_factory=create_audio_stream,
+                    track_event_runner=run_track_events,
+                    on_track_change=on_change,
+                    on_playback_status=on_status,
+                    health_monitor_target=monitor_buffer_health if effective_adaptive and buffer_manager else None,
+                    control_input_stream=sys.stdin if control_stdin else None,
+                    on_control_stop_requested=on_control_stop_requested,
+                    heartbeat_interval=STATUS_HEARTBEAT_INTERVAL_SECONDS,
+                    on_heartbeat=publish_status,
+                    on_timer_tick=on_timer_tick,
+                    on_timer_expired=on_timer_expired,
+                )
+            except RecorderError as e:
+                logging.error("Recorder failed to start: %s", e)
+                raise typer.Exit(code=1)
 
             # Keep the main thread alive while MPRIS and audio recording run
             # Initialize timer display if max_duration is specified

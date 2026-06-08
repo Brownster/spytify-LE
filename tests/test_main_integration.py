@@ -738,6 +738,32 @@ class TestMainIntegration:
         assert result.exit_code == 1
         assert "D-Bus error" in result.output
 
+    @patch('spotify_splitter.main.get_spotify_stream_info')
+    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.SegmentManager')
+    def test_engine_start_error_maps_to_clean_exit(
+        self, mock_segment_manager, mock_enhanced_stream, mock_get_stream_info
+    ):
+        """Test startup errors from the engine are mapped to a clean CLI exit."""
+        mock_get_stream_info.return_value = self.mock_stream_info
+
+        mock_stream_instance = Mock()
+        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_stream_instance.__enter__ = Mock(side_effect=RuntimeError("audio device busy"))
+        mock_stream_instance.__exit__ = Mock(return_value=None)
+
+        mock_manager_instance = Mock()
+        mock_segment_manager.return_value = mock_manager_instance
+        mock_manager_instance.flush_cache = Mock()
+        mock_manager_instance.run = Mock()
+        mock_manager_instance.shutdown_cleanup = Mock()
+
+        result = self.runner.invoke(app, ['record', '--output', self.temp_dir])
+
+        assert result.exit_code == 1
+        assert "Recorder failed to start" in result.output
+        assert "Traceback" not in result.output
+
 
 class TestConfigurationProfiles:
     """Test configuration profile functionality."""
