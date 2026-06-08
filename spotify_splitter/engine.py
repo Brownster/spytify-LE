@@ -356,6 +356,7 @@ class RecorderEngine:
             self.start(*args, **kwargs)
             self.wait()
         finally:
+            self.stop(flush=True)
             self.finalize_post_run()
 
     def run_lifecycle_once(

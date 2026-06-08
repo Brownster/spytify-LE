@@ -316,6 +316,39 @@ def test_engine_run_starts_waits_and_finalizes():
     assert tag_calls == [(Path("/tmp/out"), None)]
 
 
+def test_engine_run_interrupted_wait_stops_before_finalizing(monkeypatch):
+    events = []
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+    stream = FakeStream()
+
+    def shutdown_cleanup():
+        events.append("shutdown_cleanup")
+        manager.shutdown_calls += 1
+
+    def tag_output(output_dir, playlist):
+        events.append("tag_output")
+
+    manager.shutdown_cleanup = shutdown_cleanup
+    engine.configure_post_run_cleanup(tag_output=tag_output)
+
+    def interrupted_wait(timeout=None):
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(engine, "wait", interrupted_wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        engine.run(
+            manager=manager,
+            processing_target=lambda: None,
+            stream_factory=lambda: stream,
+        )
+
+    assert events == ["shutdown_cleanup", "tag_output"]
+    assert engine.is_stopped() is True
+    assert stream.exit_calls == 1
+
+
 def test_engine_running_predicates_track_processing_and_cleanup():
     engine = RecorderEngine(make_config())
     manager = FakeManager()
