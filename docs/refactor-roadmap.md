@@ -146,16 +146,16 @@ export queue, backpressure policy, thread ownership, and shutdown ordering.
 
 ## Pass 3 — Streamline
 
-- [ ] **Collapse the recovery maze** in `segmenter.py` (~600 lines across
+- [x] **Collapse the recovery maze** in `segmenter.py` (~600 lines across
   `_process_segment_with_recovery`, `_export_with_error_handling`, `_attempt_*`,
   `_export_with_minimal_processing`) to one policy: try export (retry only transient
   I/O), else log + skip + advance. Remove dead branches (e.g. unused `alt_path`,
   `segmenter.py` ~971).
-- [ ] **Gate telemetry behind `--debug`:** default off. Strong candidate to delete
+- [x] **Gate telemetry behind `--debug`:** default off. Strong candidate to delete
   `performance_optimizer` (never applies anything). Keep lightweight counters only.
 - [ ] **Merge the two `AudioStream` classes** once the callbacks are identical; handle
   "stream died → restart" at the supervisor level.
-- [ ] **Remove dead callback scaffolding:** `_perform_adaptive_management`,
+- [x] **Remove dead callback scaffolding:** `_perform_adaptive_management`,
   `_handle_callback_status`, `_process_audio_data`, `_handle_buffer_overflow`,
   `_handle_callback_error`, and their callback-only counters/locks after stream-level
   recovery is separated from callback-era metrics.
