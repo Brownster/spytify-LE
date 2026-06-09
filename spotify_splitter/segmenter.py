@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import logging
 import queue
 import threading
+import time
 from typing import List, Optional, Iterable
 
 import numpy as np
@@ -16,7 +17,7 @@ import requests
 
 from .mpris import TrackInfo
 from .track_boundary_detector import TrackBoundaryDetector, BoundaryResult, TrackMarker as EnhancedTrackMarker
-from .error_recovery import ErrorRecoveryManager, RecoveryAction, ErrorSeverity
+from .error_recovery import ErrorRecoveryManager
 from .lastfm_api import get_lastfm_client
 
 
@@ -684,127 +685,58 @@ class SegmentManager:
         if self.ui_callback:
             self.ui_callback("processing", start_marker.track_info)
 
-        # Process with error recovery
-        if self.enable_error_recovery:
-            success = self._process_segment_with_recovery(start_marker, end_marker)
-            if not success:
-                # Don't log error here - let _handle_processing_failure check if file exists first
-                self._handle_processing_failure(start_marker, end_marker)
-        else:
-            # Process without error recovery (legacy mode)
-            try:
-                self._process_segment_internal(start_marker, end_marker)
-            except IncompleteTrackSkip:
-                pass  # incomplete track skipped; buffer/markers already advanced
+        try:
+            self._process_segment_internal(start_marker, end_marker)
+        except IncompleteTrackSkip:
+            pass  # incomplete track skipped; buffer/markers already advanced
+        except Exception as e:
+            self._handle_segment_processing_error(start_marker, end_marker, e)
 
-    def _process_segment_with_recovery(self, start_marker: TrackMarker, end_marker: TrackMarker) -> bool:
-        """
-        Process a segment with error recovery capabilities.
-        
-        Args:
-            start_marker: Start marker for the segment
-            end_marker: End marker for the segment
-            
-        Returns:
-            True if processing was successful, False otherwise
-        """
-        for attempt in range(self.max_processing_retries + 1):
-            try:
-                self._set_stat("processing_retry_count", attempt)
-                success = self._process_segment_internal(start_marker, end_marker)
-                
-                if success:
-                    if attempt > 0:
-                        self._increment_stat("successful_recoveries")
-                        logger.info("Segment processing recovered after %d attempts: %s", 
-                                  attempt, start_marker.track_info.title)
-                        
-                        # Notify UI of successful recovery
-                        if self.ui_callback:
-                            self.ui_callback("recovery_success", {
-                                "track": start_marker.track_info,
-                                "attempts": attempt + 1
-                            })
-                    
-                    return True
-                else:
-                    # Processing returned False but didn't raise exception
-                    if attempt < self.max_processing_retries:
-                        logger.warning("Segment processing failed (attempt %d/%d), retrying: %s", 
-                                     attempt + 1, self.max_processing_retries + 1, start_marker.track_info.title)
-                        continue
-                    else:
-                        logger.error("Segment processing failed after all attempts: %s", start_marker.track_info.title)
-                        return False
+    def _advance_past_marker(self, end_marker: TrackMarker) -> None:
+        """Advance markers past a failed or skipped segment while retaining context."""
+        if end_marker.frame is not None and self.chunk_ledger.retained_frames:
+            retain_frame = max(
+                self.chunk_ledger.base_frame,
+                self._marker_frame(end_marker) - self._boundary_context_frames(),
+            )
+            dropped_ms = self._drop_audio_before_frame(retain_frame)
+            self.track_markers = [
+                self._rebase_marker_after_drop(marker, dropped_ms)
+                for marker in self.track_markers[1:]
+            ]
+            return
 
-            except IncompleteTrackSkip:
-                # Intentional skip (incomplete/too short): buffer & markers already
-                # advanced. Not a failure — do not retry or report.
-                return True
-            except Exception as e:
-                self._increment_stat("processing_errors")
-                self._increment_stat("recovery_attempts")
-                
-                # Handle the error through error recovery manager
-                context = f"segment_processing_{start_marker.track_info.title}"
-                recovery_action = self.error_recovery.handle_error(e, context)
-                
-                logger.warning("Processing error (attempt %d/%d) for %s: %s -> %s", 
-                             attempt + 1, self.max_processing_retries + 1, 
-                             start_marker.track_info.title, type(e).__name__, recovery_action.value)
-                
-                # Notify UI of processing error
-                if self.ui_callback:
-                    self.ui_callback("processing_error", {
-                        "track": start_marker.track_info,
-                        "error": str(e),
-                        "attempt": attempt + 1,
-                        "recovery_action": recovery_action.value
-                    })
-                
-                # Handle different recovery actions
-                if recovery_action == RecoveryAction.RETRY and attempt < self.max_processing_retries:
-                    # Attempt recovery
-                    recovery_success = self._attempt_segment_recovery(e, start_marker, end_marker)
-                    if recovery_success:
-                        logger.info("Segment recovery successful, retrying processing")
-                        continue
-                    else:
-                        logger.warning("Segment recovery failed, continuing with retry")
-                        continue
-                        
-                elif recovery_action == RecoveryAction.GRACEFUL_DEGRADE:
-                    # Attempt graceful degradation
-                    if self.enable_graceful_degradation:
-                        degraded_success = self._attempt_graceful_degradation(start_marker, end_marker, e)
-                        if degraded_success:
-                            self._increment_stat("degraded_exports")
-                            logger.info("Graceful degradation successful for: %s", start_marker.track_info.title)
-                            return True
-                        else:
-                            logger.warning("Graceful degradation failed for: %s", start_marker.track_info.title)
-                    
-                    # Continue to next attempt if degradation failed
-                    if attempt < self.max_processing_retries:
-                        continue
-                    else:
-                        return False
-                        
-                elif recovery_action == RecoveryAction.ESCALATE:
-                    # Escalate immediately - don't retry
-                    self.error_recovery.escalate_error(e, context)
-                    logger.critical("Error escalated for segment processing: %s", start_marker.track_info.title)
-                    return False
-                    
-                else:
-                    # For other recovery actions or final attempt, continue or fail
-                    if attempt < self.max_processing_retries:
-                        continue
-                    else:
-                        logger.error("All recovery attempts exhausted for: %s", start_marker.track_info.title)
-                        return False
-        
-        return False
+        cleanup_ms = self._marker_ms(end_marker)
+        self._drop_continuous_buffer_before(cleanup_ms)
+        self.track_markers = [
+            self._rebase_marker_after_drop(marker, cleanup_ms)
+            for marker in self.track_markers[1:]
+        ]
+
+    def _handle_segment_processing_error(
+        self, start_marker: TrackMarker, end_marker: TrackMarker, error: Exception
+    ) -> None:
+        """Report a segment preparation failure and move on to protect capture."""
+        self._increment_stat("processing_errors")
+        logger.error(
+            "Segment preparation failed for %s: %s",
+            start_marker.track_info.title,
+            error,
+        )
+
+        if self.ui_callback:
+            self.ui_callback("processing_error", {
+                "track": start_marker.track_info,
+                "error": str(error),
+                "attempt": 1,
+                "recovery_action": "skip",
+            })
+            self.ui_callback("processing_failure", {
+                "track": start_marker.track_info,
+                "error": str(error),
+            })
+
+        self._advance_past_marker(end_marker)
 
     def _process_segment_internal(self, start_marker: TrackMarker, end_marker: TrackMarker) -> bool:
         """
@@ -1171,7 +1103,7 @@ class SegmentManager:
 
     def _export_with_error_handling(self, segment: AudioSegment, track_info: TrackInfo) -> bool:
         """
-        Export audio segment with comprehensive error handling and recovery.
+        Export audio segment with bounded transient-I/O retries.
         
         Args:
             segment: Audio segment to export
@@ -1180,469 +1112,60 @@ class SegmentManager:
         Returns:
             True if export was successful, False otherwise
         """
-        max_export_retries = 3
-        
-        for attempt in range(max_export_retries):
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
             try:
-                # Attempt export
                 self._export(segment, track_info)
-                
-                if attempt > 0:
-                    logger.info("Export recovered after %d attempts: %s", attempt, track_info.title)
-                    
+                if attempt > 1:
+                    self._increment_stat("successful_recoveries")
+                    logger.info(
+                        "Export recovered after %d attempts: %s",
+                        attempt,
+                        track_info.title,
+                    )
                 return True
-                
+
             except Exception as e:
                 self._increment_stat("export_errors")
-                
-                # Handle export error through error recovery manager
-                context = f"export_{track_info.title}"
-                recovery_action = self.error_recovery.handle_error(e, context)
-                
-                logger.warning("Export error (attempt %d/%d) for %s: %s -> %s", 
-                             attempt + 1, max_export_retries, 
-                             track_info.title, type(e).__name__, recovery_action.value)
-                
-                # Notify UI of export error
+                transient = self._is_transient_export_error(e)
+                will_retry = transient and attempt < max_attempts
+
+                logger.warning(
+                    "Export error (attempt %d/%d) for %s: %s%s",
+                    attempt,
+                    max_attempts,
+                    track_info.title,
+                    e,
+                    "; retrying" if will_retry else "",
+                )
+
                 if self.ui_callback:
                     self.ui_callback("export_error", {
                         "track": track_info,
                         "error": str(e),
-                        "attempt": attempt + 1,
-                        "recovery_action": recovery_action.value
+                        "attempt": attempt,
+                        "will_retry": will_retry,
                     })
-                
-                # Handle different recovery actions
-                if recovery_action == RecoveryAction.RETRY and attempt < max_export_retries - 1:
-                    # Attempt export recovery
-                    recovery_success = self._attempt_export_recovery(e, segment, track_info)
-                    if recovery_success:
-                        logger.info("Export recovery successful, retrying")
-                        continue
-                    else:
-                        logger.warning("Export recovery failed, continuing with retry")
-                        continue
-                        
-                elif recovery_action == RecoveryAction.GRACEFUL_DEGRADE:
-                    # Attempt graceful degradation for export
-                    if self.enable_graceful_degradation:
-                        degraded_success = self._attempt_export_degradation(segment, track_info, e)
-                        if degraded_success:
-                            self._increment_stat("degraded_exports")
-                            logger.info("Export graceful degradation successful for: %s", track_info.title)
-                            return True
-                        else:
-                            logger.warning("Export graceful degradation failed for: %s", track_info.title)
-                    
-                    # Continue to next attempt if degradation failed
-                    if attempt < max_export_retries - 1:
-                        continue
-                    else:
-                        return False
-                        
-                elif recovery_action == RecoveryAction.ESCALATE:
-                    # Escalate immediately - don't retry
-                    self.error_recovery.escalate_error(e, context)
-                    logger.critical("Export error escalated: %s", track_info.title)
-                    return False
-                    
-                else:
-                    # For other recovery actions or final attempt, continue or fail
-                    if attempt < max_export_retries - 1:
-                        continue
-                    else:
-                        logger.error("All export recovery attempts exhausted for: %s", track_info.title)
-                        return False
-        
+
+                if will_retry:
+                    self._increment_stat("recovery_attempts")
+                    time.sleep(0.25 * attempt)
+                    continue
+
+                logger.error("Export failed for %s after %d attempt(s)", track_info.title, attempt)
+                if self.ui_callback:
+                    self.ui_callback("processing_failure", {
+                        "track": track_info,
+                        "error": str(e),
+                    })
+                return False
+
         return False
 
-    def _attempt_segment_recovery(self, error: Exception, start_marker: TrackMarker, end_marker: TrackMarker) -> bool:
-        """
-        Attempt to recover from segment processing errors.
-        
-        Args:
-            error: The error that occurred
-            start_marker: Start marker for the segment
-            end_marker: End marker for the segment
-            
-        Returns:
-            True if recovery was successful, False otherwise
-        """
-        try:
-            # Recovery strategies based on error type
-            error_type = type(error).__name__
-            
-            if "Memory" in error_type:
-                # Memory-related errors - try to free up memory
-                logger.info("Attempting memory recovery for segment processing")
-                
-                # Clear any temporary buffers
-                import gc
-                gc.collect()
-                
-                # Reduce buffer size temporarily if possible
-                if hasattr(self, 'continuous_buffer') and len(self.continuous_buffer) > 60000:  # > 1 minute
-                    # Keep only the last 30 seconds plus current segment
-                    segment_duration = self._marker_ms(end_marker) - self._marker_ms(start_marker)
-                    keep_duration = max(30000, segment_duration + 10000)  # 30s or segment + 10s buffer
-                    
-                    trim_point = len(self.continuous_buffer) - keep_duration
-                    if trim_point > 0:
-                        self._drop_continuous_buffer_before(trim_point)
-                        
-                        # Adjust markers
-                        self.track_markers = [
-                            self._rebase_marker_after_drop(marker, trim_point)
-                            for marker in self.track_markers
-                        ]
-                        
-                        logger.info("Trimmed buffer for memory recovery: removed %dms", trim_point)
-                
-                return True
-                
-            elif "IO" in error_type or "OSError" in error_type:
-                # I/O related errors - check disk space and permissions
-                logger.info("Attempting I/O recovery for segment processing")
-                
-                # Check if output directory is accessible
-                try:
-                    self.output_dir.mkdir(parents=True, exist_ok=True)
-                    test_file = self.output_dir / ".test_write"
-                    test_file.write_text("test")
-                    test_file.unlink()
-                    logger.info("Output directory accessibility verified")
-                    return True
-                except Exception as io_error:
-                    logger.error("Output directory not accessible: %s", io_error)
-                    return False
-                    
-            elif "Audio" in error_type or "pydub" in error_type.lower():
-                # Audio processing errors - try to validate and repair audio data
-                logger.info("Attempting audio recovery for segment processing")
-                
-                # Check if continuous buffer is valid
-                if len(self.continuous_buffer) == 0:
-                    logger.warning("Empty continuous buffer detected")
-                    return False
-                
-                # Validate segment boundaries
-                start_ms = self._marker_ms(start_marker)
-                end_ms = self._marker_ms(end_marker)
-
-                if start_ms >= len(self.continuous_buffer):
-                    logger.warning("Start marker beyond buffer length")
-                    return False
-                    
-                if end_ms > len(self.continuous_buffer):
-                    logger.warning("End marker beyond buffer length, adjusting")
-                    # Adjust end marker to buffer length
-                    adjusted_marker = end_marker._replace(
-                        timestamp=len(self.continuous_buffer),
-                        frame=self._buffer_ms_to_frame(len(self.continuous_buffer)),
-                    )
-                    # Update the marker in the list
-                    for i, marker in enumerate(self.track_markers):
-                        if marker == end_marker:
-                            self.track_markers[i] = adjusted_marker
-                            break
-                
-                return True
-                
-            else:
-                # Generic recovery - just wait a moment and try again
-                logger.info("Attempting generic recovery for segment processing")
-                import time
-                time.sleep(0.1)
-                return True
-                
-        except Exception as recovery_error:
-            logger.error("Error during segment recovery: %s", recovery_error)
-            return False
-
-    def _attempt_export_recovery(self, error: Exception, segment: AudioSegment, track_info: TrackInfo) -> bool:
-        """
-        Attempt to recover from export errors.
-        
-        Args:
-            error: The error that occurred
-            segment: Audio segment to export
-            track_info: Track information
-            
-        Returns:
-            True if recovery was successful, False otherwise
-        """
-        try:
-            error_type = type(error).__name__
-            
-            if "Permission" in error_type or "OSError" in error_type:
-                # Permission or file system errors
-                logger.info("Attempting file system recovery for export")
-                
-                # Ensure output directory exists and is writable
-                path = self._get_track_path(track_info)
-                path.parent.mkdir(parents=True, exist_ok=True)
-                
-                # Check if file already exists and remove if necessary
-                if path.exists():
-                    try:
-                        path.unlink()
-                        logger.info("Removed existing file for retry: %s", path)
-                    except Exception:
-                        # Try alternative filename
-                        import time
-                        timestamp = int(time.time())
-                        alt_path = path.with_stem(f"{path.stem}_{timestamp}")
-                        logger.info("Using alternative filename: %s", alt_path)
-                        # Update the path for this export attempt
-                        return True
-                
-                return True
-                
-            elif "Memory" in error_type:
-                # Memory errors during export
-                logger.info("Attempting memory recovery for export")
-                
-                # Force garbage collection
-                import gc
-                gc.collect()
-                
-                # Try to reduce audio quality temporarily if segment is very long
-                if len(segment) > 300000:  # > 5 minutes
-                    logger.info("Large segment detected, may need quality reduction")
-                
-                return True
-                
-            elif "requests" in error_type.lower() or "connection" in error_type.lower():
-                # Network errors (likely album art download)
-                logger.info("Attempting network recovery for export")
-                
-                # Skip album art download for this retry
-                # This would require modifying the export method to accept a flag
-                # For now, just wait and retry
-                import time
-                time.sleep(1.0)
-                return True
-                
-            else:
-                # Generic recovery
-                logger.info("Attempting generic recovery for export")
-                import time
-                time.sleep(0.5)
-                return True
-                
-        except Exception as recovery_error:
-            logger.error("Error during export recovery: %s", recovery_error)
-            return False
-
-    def _attempt_graceful_degradation(self, start_marker: TrackMarker, end_marker: TrackMarker, error: Exception) -> bool:
-        """
-        Attempt graceful degradation for segment processing.
-        
-        Args:
-            start_marker: Start marker for the segment
-            end_marker: End marker for the segment
-            error: The error that occurred
-            
-        Returns:
-            True if graceful degradation was successful, False otherwise
-        """
-        try:
-            logger.info("Attempting graceful degradation for segment processing: %s", start_marker.track_info.title)
-            
-            # Simplified processing without advanced features
-            try:
-                # Use basic timestamp-based cutting without boundary detection
-                start_ms = self._marker_ms(start_marker)
-                end_ms = self._marker_ms(end_marker)
-                song_chunk = self.continuous_buffer[start_ms : end_ms]
-                
-                if len(song_chunk) == 0:
-                    logger.warning("Empty audio chunk in graceful degradation")
-                    return False
-                
-                # Skip duration validation in degraded mode
-                logger.info("Graceful degradation: skipping duration validation")
-                
-                # Export with minimal processing
-                degraded_success = self._export_with_minimal_processing(song_chunk, start_marker.track_info)
-                
-                if degraded_success:
-                    # Clean up buffer and markers
-                    cleanup_timestamp = end_ms
-                    self._drop_continuous_buffer_before(cleanup_timestamp)
-                    self.track_markers = [
-                        self._rebase_marker_after_drop(marker, cleanup_timestamp)
-                        for marker in self.track_markers[1:]
-                    ]
-                    
-                    logger.info("Graceful degradation successful: %s", start_marker.track_info.title)
-                    
-                    # Notify UI of degraded export
-                    if self.ui_callback:
-                        self.ui_callback("degraded_export", {
-                            "track": start_marker.track_info,
-                            "reason": str(error)
-                        })
-                    
-                    return True
-                else:
-                    logger.warning("Graceful degradation export failed: %s", start_marker.track_info.title)
-                    return False
-                    
-            except Exception as degradation_error:
-                logger.error("Error in graceful degradation processing: %s", degradation_error)
-                return False
-                
-        except Exception as e:
-            logger.error("Error in graceful degradation attempt: %s", e)
-            return False
-
-    def _attempt_export_degradation(self, segment: AudioSegment, track_info: TrackInfo, error: Exception) -> bool:
-        """
-        Attempt graceful degradation for export.
-        
-        Args:
-            segment: Audio segment to export
-            track_info: Track information
-            error: The error that occurred
-            
-        Returns:
-            True if graceful degradation was successful, False otherwise
-        """
-        try:
-            logger.info("Attempting export graceful degradation: %s", track_info.title)
-            
-            # Try minimal processing export
-            success = self._export_with_minimal_processing(segment, track_info)
-            
-            if success:
-                logger.info("Export graceful degradation successful: %s", track_info.title)
-                
-                # Notify UI of degraded export
-                if self.ui_callback:
-                    self.ui_callback("degraded_export", {
-                        "track": track_info,
-                        "reason": str(error),
-                        "type": "export"
-                    })
-                
-                return True
-            else:
-                logger.warning("Export graceful degradation failed: %s", track_info.title)
-                return False
-                
-        except Exception as e:
-            logger.error("Error in export graceful degradation: %s", e)
-            return False
-
-    def _export_with_minimal_processing(self, segment: AudioSegment, track_info: TrackInfo) -> bool:
-        """
-        Export audio with minimal processing for graceful degradation.
-        
-        Args:
-            segment: Audio segment to export
-            track_info: Track information
-            
-        Returns:
-            True if export was successful, False otherwise
-        """
-        try:
-            path = self._get_track_path(track_info)
-            path.parent.mkdir(parents=True, exist_ok=True)
-
-            # Skip if file already exists and overwrite is not allowed
-            if path.exists() and not self.allow_overwrite:
-                logger.info("File %s already exists, skipping minimal export", path)
-                return True
-
-            if path.exists():
-                logger.info("File %s already exists, overwriting with minimal export...", path)
-            
-            # Export with basic settings, no album art
-            segment.export(path, format=self.format, bitrate="192k")  # Lower bitrate for degraded mode
-            
-            # Add basic tags only
-            try:
-                tags = EasyID3(path)
-            except Exception:
-                tags = EasyID3()
-            
-            # Only add essential tags
-            tags["artist"] = track_info.artist
-            tags["title"] = track_info.title
-            if self.bundle_album_name:
-                tags["album"] = self.bundle_album_name
-                tags["albumartist"] = "Various Artists"
-            else:
-                tags["album"] = track_info.album
-                tags["albumartist"] = track_info.artist
-            tags.save(path)
-            
-            # Skip album art in degraded mode
-            logger.info("Minimal export saved (no album art): %s", path)
-            
-            # Notify UI of successful save
-            if self.ui_callback:
-                self.ui_callback("saved", track_info)
-            
-            return True
-            
-        except Exception as e:
-            logger.error("Error in minimal processing export: %s", e)
-            return False
-
-    def _handle_processing_failure(self, start_marker: TrackMarker, end_marker: TrackMarker) -> None:
-        """
-        Handle complete processing failure after all recovery attempts.
-
-        Args:
-            start_marker: Start marker for the failed segment
-            end_marker: End marker for the failed segment
-        """
-        # CRITICAL: Check if file actually exists before logging failure
-        # File might have been created successfully even if processing returned False
-        expected_path = self._get_track_path(start_marker.track_info)
-
-        if expected_path.exists() and expected_path.stat().st_size > 0:
-            # File exists and is not empty - processing actually succeeded!
-            logger.info("Track file exists despite processing errors - recovery was successful: %s",
-                       start_marker.track_info.title)
-
-            # Notify UI of successful recovery instead of failure
-            if self.ui_callback:
-                self.ui_callback("recovery_success", {
-                    "track": start_marker.track_info,
-                    "message": "Track saved successfully after error recovery"
-                })
-        else:
-            # File truly doesn't exist - this is a real failure
-            logger.error("Complete processing failure for: %s (file not created)", start_marker.track_info.title)
-
-            # Notify UI of actual processing failure
-            if self.ui_callback:
-                self.ui_callback("processing_failure", {
-                    "track": start_marker.track_info,
-                    "error": "All recovery attempts failed - file not created"
-                })
-
-        # Clean up buffer and markers to continue with next track
-        cleanup_timestamp = self._marker_ms(end_marker)
-        self._drop_continuous_buffer_before(cleanup_timestamp)
-        self.track_markers = [
-            self._rebase_marker_after_drop(marker, cleanup_timestamp)
-            for marker in self.track_markers[1:]
-        ]
-        
-        # Generate error diagnostics
-        if self.enable_error_recovery:
-            diagnostics = self.error_recovery.get_diagnostics()
-            logger.warning("Error diagnostics - Total errors: %d, Recovery rate: %.1f%%", 
-                         diagnostics.total_errors, diagnostics.recovery_success_rate * 100)
-            
-            if diagnostics.recommendations:
-                logger.info("Error recovery recommendations:")
-                for rec in diagnostics.recommendations[:3]:  # Show top 3
-                    logger.info("  - %s", rec)
+    def _is_transient_export_error(self, error: Exception) -> bool:
+        """Return true for export errors worth retrying on the export worker."""
+        return isinstance(error, (OSError, IOError, TimeoutError, requests.RequestException))
 
     def get_error_statistics(self) -> dict:
         """

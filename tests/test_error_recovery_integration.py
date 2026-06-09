@@ -9,14 +9,13 @@ import pytest
 import threading
 import time
 import queue
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 import tempfile
 import shutil
 from pydub import AudioSegment
-import numpy as np
 
-from spotify_splitter.error_recovery import ErrorRecoveryManager, RecoveryAction, ErrorSeverity
+from spotify_splitter.error_recovery import ErrorRecoveryManager, RecoveryAction
 from spotify_splitter.audio import EnhancedAudioStream
 from spotify_splitter.segmenter import SegmentManager, TrackMarker
 from spotify_splitter.mpris import TrackInfo
@@ -88,8 +87,10 @@ class TestErrorRecoveryIntegration:
             enable_graceful_degradation=True
         )
     
-    def test_segment_processing_error_recovery(self, segment_manager, mock_track_info, ui_callback_mock):
-        """Test error recovery during segment processing."""
+    def test_segment_processing_error_is_reported_without_retry(
+        self, segment_manager, mock_track_info, ui_callback_mock
+    ):
+        """Test segment preparation failures are reported once and skipped."""
         # Create test audio data
         test_audio = AudioSegment.silent(duration=3000)  # 3 seconds
         segment_manager.continuous_buffer = test_audio
@@ -99,44 +100,36 @@ class TestErrorRecoveryIntegration:
         end_marker = TrackMarker(3000, mock_track_info)
         segment_manager.track_markers = [start_marker, end_marker]
         
-        # Mock boundary detector to raise an error on first call, succeed on second
         call_count = 0
         def mock_detect_boundary(*args, **kwargs):
             nonlocal call_count
             call_count += 1
-            if call_count == 1:
-                raise ValueError("Simulated boundary detection error")
-            # Return successful boundary result on retry
-            from spotify_splitter.track_boundary_detector import BoundaryResult
-            return BoundaryResult(
-                start_frame=0,
-                end_frame=3000,
-                confidence=0.9,
-                continuity_valid=True,
-                grace_period_applied=False,
-                correction_applied=False
-            )
+            raise ValueError("Simulated boundary detection error")
         
         with patch.object(segment_manager.boundary_detector, 'detect_boundary', side_effect=mock_detect_boundary):
             with patch.object(segment_manager, '_export') as mock_export:
-                # Process segments - should recover from first error
                 segment_manager.process_segments()
                 segment_manager.wait_for_exports()
                 
-                # Verify recovery was attempted and succeeded
-                assert call_count == 2  # First call failed, second succeeded
-                mock_export.assert_called_once()
+                assert call_count == 1
+                mock_export.assert_not_called()
+                assert len(segment_manager.track_markers) == 1
+                assert segment_manager.processing_errors == 1
+                assert segment_manager.recovery_attempts == 0
                 
-                # Verify UI callbacks for error and recovery
                 ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
                 error_calls = [call for call in ui_callback_calls if call[0] == "processing_error"]
+                failure_calls = [call for call in ui_callback_calls if call[0] == "processing_failure"]
                 recovery_calls = [call for call in ui_callback_calls if call[0] == "recovery_success"]
                 
-                assert len(error_calls) >= 1, "Should have called UI with processing error"
-                assert len(recovery_calls) >= 1, "Should have called UI with recovery success"
+                assert len(error_calls) == 1
+                assert len(failure_calls) == 1
+                assert len(recovery_calls) == 0
     
-    def test_segment_processing_graceful_degradation(self, segment_manager, mock_track_info, ui_callback_mock):
-        """Test graceful degradation when processing repeatedly fails."""
+    def test_segment_processing_failure_does_not_degrade(
+        self, segment_manager, mock_track_info, ui_callback_mock
+    ):
+        """Test segment failures do not use the removed degraded export path."""
         # Create test audio data
         test_audio = AudioSegment.silent(duration=3000)
         segment_manager.continuous_buffer = test_audio
@@ -146,22 +139,18 @@ class TestErrorRecoveryIntegration:
         end_marker = TrackMarker(3000, mock_track_info)
         segment_manager.track_markers = [start_marker, end_marker]
         
-        # Mock boundary detector to always fail with a memory error that should trigger graceful degradation
         with patch.object(segment_manager.boundary_detector, 'detect_boundary', 
                          side_effect=MemoryError("Out of memory during boundary detection")):
-            with patch.object(segment_manager, '_export_with_minimal_processing', return_value=True) as mock_minimal_export:
-                # Process segments - should fall back to graceful degradation
-                segment_manager.process_segments()
-                
-                # Verify graceful degradation was used
-                mock_minimal_export.assert_called_once()
-                
-                # Verify UI callback for degraded export
-                ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
-                degraded_calls = [call for call in ui_callback_calls if call[0] == "degraded_export"]
-                
-                assert len(degraded_calls) >= 1, "Should have called UI with degraded export notification"
-                assert segment_manager.degraded_exports == 1
+            segment_manager.process_segments()
+
+        ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
+        degraded_calls = [call for call in ui_callback_calls if call[0] == "degraded_export"]
+        failure_calls = [call for call in ui_callback_calls if call[0] == "processing_failure"]
+
+        assert not hasattr(segment_manager, "_export_with_minimal_processing")
+        assert len(degraded_calls) == 0
+        assert len(failure_calls) == 1
+        assert segment_manager.degraded_exports == 0
     
     def test_export_error_recovery(self, segment_manager, mock_track_info, ui_callback_mock):
         """Test error recovery during export operations."""
@@ -180,8 +169,11 @@ class TestErrorRecoveryIntegration:
             # Test export with error handling
             success = segment_manager._export_with_error_handling(test_audio, mock_track_info)
             
-            assert success, "Export should succeed after recovery"
+            assert success, "Export should succeed after transient retry"
             assert call_count == 2, "Export should be retried once"
+            assert segment_manager.export_errors == 1
+            assert segment_manager.recovery_attempts == 1
+            assert segment_manager.successful_recoveries == 1
             
             # Verify UI callbacks for export error
             ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
@@ -189,30 +181,33 @@ class TestErrorRecoveryIntegration:
             
             assert len(export_error_calls) >= 1, "Should have called UI with export error"
     
-    def test_progressive_error_escalation(self, segment_manager, mock_track_info, ui_callback_mock):
-        """Test progressive error escalation when all recovery attempts fail."""
-        # Create test audio data
+    def test_export_non_transient_failure_does_not_retry(
+        self, segment_manager, mock_track_info, ui_callback_mock
+    ):
+        """Test non-transient export failures fail once and notify."""
         test_audio = AudioSegment.silent(duration=3000)
-        segment_manager.continuous_buffer = test_audio
-        
-        # Create track markers
-        start_marker = TrackMarker(0, mock_track_info)
-        end_marker = TrackMarker(3000, mock_track_info)
-        segment_manager.track_markers = [start_marker, end_marker]
-        
-        # Mock all recovery attempts to fail
-        with patch.object(segment_manager.boundary_detector, 'detect_boundary', 
-                         side_effect=RuntimeError("Persistent error")):
-            with patch.object(segment_manager, '_export_with_minimal_processing', return_value=False):
-                # Process segments - should escalate after all attempts fail
-                segment_manager.process_segments()
-                
-                # Verify processing failure was handled
-                ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
-                failure_calls = [call for call in ui_callback_calls if call[0] == "processing_failure"]
-                
-                assert len(failure_calls) >= 1, "Should have called UI with processing failure"
-                assert segment_manager.processing_errors > 0
+        call_count = 0
+
+        def mock_export_side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("Persistent export error")
+
+        with patch.object(segment_manager, '_export', side_effect=mock_export_side_effect):
+            success = segment_manager._export_with_error_handling(test_audio, mock_track_info)
+
+        assert not success
+        assert call_count == 1
+        assert segment_manager.export_errors == 1
+        assert segment_manager.recovery_attempts == 0
+
+        ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
+        export_error_calls = [call for call in ui_callback_calls if call[0] == "export_error"]
+        failure_calls = [call for call in ui_callback_calls if call[0] == "processing_failure"]
+
+        assert len(export_error_calls) == 1
+        assert export_error_calls[0][1]["will_retry"] is False
+        assert len(failure_calls) == 1
     
     def test_audio_stream_error_recovery(self, error_recovery_manager, ui_callback_mock):
         """Test error recovery in EnhancedAudioStream."""
@@ -329,7 +324,7 @@ class TestErrorRecoveryIntegration:
             id="spotify:track:test456",
             track_number=2,
             position=0,
-            duration_ms=240000
+            duration_ms=2500
         )
         
         markers = [
@@ -347,13 +342,11 @@ class TestErrorRecoveryIntegration:
             nonlocal boundary_call_count
             boundary_call_count += 1
             if boundary_call_count == 1:
-                # First track fails boundary detection
                 raise ValueError("Boundary detection failed")
-            # Second track succeeds
             from spotify_splitter.track_boundary_detector import BoundaryResult
             return BoundaryResult(
-                start_frame=2500,
-                end_frame=5000,
+                start_frame=0,
+                end_frame=2500,
                 confidence=0.8,
                 continuity_valid=True,
                 grace_period_applied=True,
@@ -364,36 +357,34 @@ class TestErrorRecoveryIntegration:
             nonlocal export_call_count
             export_call_count += 1
             if export_call_count == 1:
-                # First export attempt fails
                 raise IOError("Export failed")
-            # Subsequent exports succeed
             return None
         
         with patch.object(segment_manager.boundary_detector, 'detect_boundary', 
                          side_effect=mock_boundary_detect):
             with patch.object(segment_manager, '_export', side_effect=mock_export):
-                with patch.object(segment_manager, '_export_with_minimal_processing', return_value=True):
-                    # Process first segment (should use graceful degradation)
-                    segment_manager.process_segments()
-                    
-                    # Process second segment (should recover from export error)
-                    if len(segment_manager.track_markers) >= 2:
-                        segment_manager.process_segments()
+                # Process first segment: boundary failure is reported and skipped.
+                segment_manager.process_segments()
 
-                    segment_manager.wait_for_exports()
+                # Process second segment: export fails transiently and retries on worker.
+                if len(segment_manager.track_markers) >= 2:
+                    segment_manager.process_segments()
+
+                segment_manager.wait_for_exports()
         
-        # Verify comprehensive error handling occurred
-        assert segment_manager.processing_errors > 0 or segment_manager.export_errors > 0
-        assert segment_manager.recovery_attempts > 0
+        assert segment_manager.processing_errors == 1
+        assert segment_manager.export_errors == 1
+        assert segment_manager.recovery_attempts == 1
+        assert segment_manager.successful_recoveries == 1
+        assert segment_manager.degraded_exports == 0
         
         # Verify UI was notified of various events
         ui_callback_calls = [call.args[0] for call in ui_callback_mock.call_args_list]
         
-        # Should have various error recovery events
-        expected_events = ["processing_error", "export_error", "degraded_export", "recovery_success"]
+        expected_events = ["processing_error", "processing_failure", "export_error"]
         found_events = [event for event in expected_events if event in ui_callback_calls]
         
-        assert len(found_events) > 0, f"Should have found error recovery events, got: {ui_callback_calls}"
+        assert found_events == expected_events
     
     def test_error_statistics_and_diagnostics(
         self, segment_manager, error_recovery_manager, mock_track_info
