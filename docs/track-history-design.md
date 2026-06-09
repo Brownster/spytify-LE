@@ -1,13 +1,15 @@
 # Track History & Metadata Correction — Design
 
-Status: **Phase 1 built** (steps 1–2; step 3 retire-log-grep deferred) · Phase 2 not started · Updated 2026-06-10
+Status: **Phase 1 complete** (steps 1–3) · Phase 2 not started · Updated 2026-06-10
 
 Built: `spotify_splitter/track_history.py` (`TrackResult` + capped JSONL
 `TrackHistoryWriter`); `SegmentManager.on_track_result` emits at all four outcome
 points with resolved year/genre; `--history-file` CLI wiring; service `/history`
 endpoint (+ `--history-file` spawn arg, persistent `~/.cache/.../history.jsonl`);
-web UI "Recorded Tracks" table. Remaining: retire the log-grep panel once parity
-is confirmed (step 3); then Phase 2 (inline edit).
+web UI "Recorded Tracks" table. **Step 3 done:** the log-grep activity panel
+(`filter_recorder_logs`, `/logs`, `/toggle-verbose`) is removed; the table is the
+sole activity view. Next: Phase 2 (inline year/genre edit via mutagen tag rewrite,
+path-validated to the output dir).
 
 ## Goal
 
