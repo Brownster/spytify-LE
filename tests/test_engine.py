@@ -161,24 +161,6 @@ class FakePerformanceDashboard:
         self.stop_calls += 1
 
 
-class FakeSuggestion:
-    title = "Reduce queue pressure"
-    description = "Keep callback work low"
-
-
-class FakePerformanceOptimizer:
-    def __init__(self):
-        self.stop_calls = 0
-        self.suggestion_calls = 0
-
-    def stop_optimization(self):
-        self.stop_calls += 1
-
-    def get_optimization_suggestions(self, limit=3):
-        self.suggestion_calls += 1
-        return [FakeSuggestion()]
-
-
 def test_engine_creates_runtime_queues_from_config():
     engine = RecorderEngine(make_config(queue_size=123))
 
@@ -262,12 +244,10 @@ def test_engine_finalize_post_run_stops_components_and_tags_output():
     manager = FakeManager()
     metrics = FakeMetricsCollector()
     dashboard = FakePerformanceDashboard()
-    optimizer = FakePerformanceOptimizer()
     engine.attach_segment_manager(manager, FakeThread())
     engine.configure_post_run_cleanup(
         metrics_collector=metrics,
         performance_dashboard=dashboard,
-        performance_optimizer=optimizer,
         tag_output=lambda output_dir, playlist: tag_calls.append((output_dir, playlist)),
         final_diagnostics=True,
     )
@@ -275,11 +255,9 @@ def test_engine_finalize_post_run_stops_components_and_tags_output():
     engine.finalize_post_run()
     engine.finalize_post_run()
 
-    assert optimizer.stop_calls == 1
     assert dashboard.stop_calls == 1
     assert metrics.stop_calls == 1
     assert metrics.report_calls == 1
-    assert optimizer.suggestion_calls == 1
     assert manager.close_calls == 1
     assert tag_calls == [(Path("/tmp/out"), playlist_path)]
 

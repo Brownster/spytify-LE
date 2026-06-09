@@ -203,7 +203,7 @@ should use `RecorderConfigError`.
 - MPRIS tracking thread
 - optional buffer health monitor thread
 - optional stdin control thread
-- metrics/dashboard/optimizer lifecycle while they still exist
+- metrics/dashboard lifecycle while they still exist
 
 The PortAudio callback remains owned by `AudioStream`/`EnhancedAudioStream`; the engine
 only owns the stream context and queue.
@@ -221,7 +221,7 @@ Engine shutdown also owns the non-thread cleanup that currently lives in
 `main.record()`:
 
 - stop metrics collection
-- stop dashboard/optimizer components
+- stop dashboard components
 - close the playlist via `SegmentManager.close_playlist()`
 - call `tag_output(...)` after recording stops
 
@@ -250,7 +250,7 @@ The service stale threshold remains 15 seconds, a 3x heartbeat window.
    `RecorderEngine`.
 4. Move timer expiry handling into `RecorderEngine`; keep timer display formatting in
    the CLI.
-5. Move metrics/dashboard/optimizer shutdown, playlist close, and post-run
+5. Move metrics/dashboard shutdown, playlist close, and post-run
    `tag_output(...)` into engine shutdown.
 6. Keep `main.record()` responsible for Typer parsing, config/profile resolution, Rich
    UI construction, KeyboardInterrupt handling, exit-code mapping, and translating

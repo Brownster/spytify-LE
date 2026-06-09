@@ -110,7 +110,7 @@ and the lifecycle/heartbeat loop that drives timer expiry and normal-exit cleanu
 through the guarded stop/control path. `start()` now unwinds an entered stream on
 partial startup failure. CLI rendering now calls `Live.update()` only from the main
 thread render loop; background callbacks only mutate state and publish status. Post-run
-cleanup for metrics/dashboard/optimizer shutdown, playlist close, and external tagging
+cleanup for metrics/dashboard shutdown, playlist close, and external tagging
 now runs through the engine. Service-launched recorder subprocesses run through the
 headless `engine.run()` path (`start()` + `wait()` + `finalize_post_run()`).
 
@@ -151,8 +151,8 @@ export queue, backpressure policy, thread ownership, and shutdown ordering.
   `_export_with_minimal_processing`) to one policy: try export (retry only transient
   I/O), else log + skip + advance. Remove dead branches (e.g. unused `alt_path`,
   `segmenter.py` ~971).
-- [x] **Gate telemetry behind `--debug`:** default off. Removed runtime
-  `performance_optimizer` wiring (it never applies anything). Keep lightweight counters only.
+- [x] **Gate telemetry behind `--debug`:** default off. Removed and deleted the
+  unused `performance_optimizer` subsystem. Keep lightweight counters only.
 - [ ] **Merge the two `AudioStream` classes** once the callbacks are identical; handle
   "stream died → restart" at the supervisor level.
 - [x] **Remove dead callback scaffolding:** `_perform_adaptive_management`,

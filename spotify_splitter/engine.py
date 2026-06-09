@@ -168,7 +168,6 @@ class RecorderEngine:
         self._timer_remaining_seconds = self._timer_duration_seconds
         self._metrics_collector: Optional[object] = None
         self._performance_dashboard: Optional[object] = None
-        self._performance_optimizer: Optional[object] = None
         self._tag_output: Optional[TagOutputCallback] = None
         self._final_diagnostics_enabled = False
 
@@ -179,13 +178,11 @@ class RecorderEngine:
         self,
         metrics_collector: Optional[object] = None,
         performance_dashboard: Optional[object] = None,
-        performance_optimizer: Optional[object] = None,
         tag_output: Optional[TagOutputCallback] = None,
         final_diagnostics: bool = False,
     ) -> None:
         self._metrics_collector = metrics_collector
         self._performance_dashboard = performance_dashboard
-        self._performance_optimizer = performance_optimizer
         self._tag_output = tag_output
         self._final_diagnostics_enabled = final_diagnostics
 
@@ -463,7 +460,6 @@ class RecorderEngine:
         with self._finalize_lock:
             if self._finalize_done:
                 return
-            self._stop_performance_optimizer()
             self._stop_performance_dashboard()
             self._stop_metrics_collection()
             self._close_playlist()
@@ -512,15 +508,6 @@ class RecorderEngine:
         finally:
             self._audio_stream_entered = False
 
-    def _stop_performance_optimizer(self) -> None:
-        if not self._performance_optimizer:
-            return
-        try:
-            self._performance_optimizer.stop_optimization()
-            logging.info("Performance optimizer stopped")
-        except Exception as e:
-            logging.error("Error stopping performance optimizer: %s", e)
-
     def _stop_performance_dashboard(self) -> None:
         if not self._performance_dashboard:
             return
@@ -556,13 +543,6 @@ class RecorderEngine:
                 logging.info("  - Recommendations:")
                 for recommendation in report.recommendations[:3]:
                     logging.info("    * %s", recommendation)
-
-            if self._performance_optimizer:
-                suggestions = self._performance_optimizer.get_optimization_suggestions(limit=3)
-                if suggestions:
-                    logging.info("  - Performance optimization suggestions:")
-                    for suggestion in suggestions:
-                        logging.info("    * %s: %s", suggestion.title, suggestion.description)
         except Exception as e:
             logging.debug("Error generating final report: %s", e)
 
