@@ -22,7 +22,6 @@ from .buffer_health_monitor import BufferHealthMonitor
 from .error_recovery import ErrorRecoveryManager
 from .metrics_collector import MetricsCollector
 from .performance_dashboard import PerformanceDashboard, DashboardConfig
-from .performance_optimizer import PerformanceOptimizer
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
 from .engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig, RecorderError
 from .segmenter import SegmentManager, OUTPUT_DIR
@@ -356,7 +355,6 @@ def record(
     error_recovery = None
     metrics_collector = None
     performance_dashboard = None
-    performance_optimizer = None
     
     try:
         if effective_adaptive:
@@ -402,14 +400,6 @@ def record(
                 )
                 logging.info("Performance dashboard initialized")
             
-            # Initialize performance optimizer
-            performance_optimizer = PerformanceOptimizer(
-                metrics_collector=metrics_collector,
-                auto_apply_safe_optimizations=False,  # Keep manual for safety
-                optimization_interval=300.0  # 5 minutes
-            )
-            logging.info("Performance optimizer initialized")
-        
     except Exception as e:
         logging.error(f"Error initializing adaptive components: {e}")
         # Continue with basic functionality
@@ -766,7 +756,6 @@ def record(
     engine.configure_post_run_cleanup(
         metrics_collector=metrics_collector,
         performance_dashboard=performance_dashboard,
-        performance_optimizer=performance_optimizer,
         tag_output=tag_output,
         final_diagnostics=effective_debug,
     )
@@ -882,11 +871,6 @@ def record(
                 performance_dashboard.start_monitoring()
                 logging.info("Performance dashboard started")
             
-            # Start performance optimizer if enabled
-            if performance_optimizer:
-                performance_optimizer.start_optimization()
-                logging.info("Performance optimizer started")
-                
         except Exception as e:
             logging.error(f"Error starting metrics collection: {e}")
 

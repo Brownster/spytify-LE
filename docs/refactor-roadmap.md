@@ -151,8 +151,8 @@ export queue, backpressure policy, thread ownership, and shutdown ordering.
   `_export_with_minimal_processing`) to one policy: try export (retry only transient
   I/O), else log + skip + advance. Remove dead branches (e.g. unused `alt_path`,
   `segmenter.py` ~971).
-- [x] **Gate telemetry behind `--debug`:** default off. Strong candidate to delete
-  `performance_optimizer` (never applies anything). Keep lightweight counters only.
+- [x] **Gate telemetry behind `--debug`:** default off. Removed runtime
+  `performance_optimizer` wiring (it never applies anything). Keep lightweight counters only.
 - [ ] **Merge the two `AudioStream` classes** once the callbacks are identical; handle
   "stream died → restart" at the supervisor level.
 - [x] **Remove dead callback scaffolding:** `_perform_adaptive_management`,
