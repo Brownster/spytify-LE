@@ -7,6 +7,7 @@ from pathlib import Path
 import subprocess
 
 from spoti2_service.service_app import RecorderSupervisor
+from spoti2_service.web_ui import render_index
 from spotify_splitter.user_config import DEFAULT_CONFIG
 
 
@@ -83,6 +84,23 @@ def test_build_command_passes_status_file(tmp_path):
     assert "--status-file" in command
     assert command[command.index("--status-file") + 1] == str(status_path)
     assert command[-4:] == ["record", "--status-file", str(status_path), "--control-stdin"]
+
+
+def test_render_index_escapes_config_and_status_values():
+    config = DEFAULT_CONFIG.copy()
+    config["output"] = '"/tmp/music"'
+    config["lastfm_api_key"] = '<script>alert("x")</script>'
+    status = {
+        "state": "running",
+        "details": "<b>recording</b>",
+    }
+
+    html = render_index(config, status, verbose_logging=True)
+
+    assert "Spoti2 - Linux Spotify Recorder" in html
+    assert '&lt;b&gt;recording&lt;/b&gt;' in html
+    assert '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;' in html
+    assert 'name="verbose" checked' in html
 
 
 def test_stop_sends_graceful_control_command(tmp_path):
