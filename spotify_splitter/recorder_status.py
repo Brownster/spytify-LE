@@ -11,7 +11,7 @@ import tempfile
 from typing import Any, Dict, Optional
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def utc_now_iso() -> str:
@@ -26,6 +26,7 @@ class TrackStatus:
     album: str = ""
     duration_ms: int = 0
     position: float = 0.0
+    art_uri: str = ""
 
     @classmethod
     def from_track_info(cls, track: Any) -> "TrackStatus":
@@ -35,6 +36,7 @@ class TrackStatus:
             album=getattr(track, "album", "") or "",
             duration_ms=int(getattr(track, "duration_ms", 0) or 0),
             position=float(getattr(track, "position", 0.0) or 0.0),
+            art_uri=getattr(track, "art_uri", "") or "",
         )
 
 
@@ -60,6 +62,8 @@ class RecorderStatus:
     tracks_recorded: int = 0
     timer: TimerStatus = field(default_factory=TimerStatus)
     audio: AudioStatus = field(default_factory=AudioStatus)
+    samplerate: int = 0
+    output_format: str = ""
     last_error: Optional[str] = None
     updated_at: str = field(default_factory=utc_now_iso)
     schema_version: int = SCHEMA_VERSION

@@ -17,9 +17,11 @@ def test_recorder_status_defaults():
 
     data = status.to_dict()
 
-    assert data["schema_version"] == 1
+    assert data["schema_version"] == 2
     assert data["state"] == "stopped"
     assert data["current_track"] is None
+    assert data["samplerate"] == 0
+    assert data["output_format"] == ""
     assert data["timer"] == {
         "enabled": False,
         "elapsed_seconds": 0,
@@ -38,7 +40,7 @@ def test_track_status_from_track_info():
         artist="Ada",
         title="First Pass",
         album="Compiler Songs",
-        art_uri=None,
+        art_uri="https://example.com/art.jpg",
         id="track-1",
         track_number=1,
         position=12.5,
@@ -51,6 +53,7 @@ def test_track_status_from_track_info():
         album="Compiler Songs",
         duration_ms=180000,
         position=12.5,
+        art_uri="https://example.com/art.jpg",
     )
 
 

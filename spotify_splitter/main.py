@@ -463,6 +463,9 @@ def record(
 
     status_writer = AtomicStatusWriter(status_file, fsync=False) if status_file else None
     recorder_status = RecorderStatus(state="starting")
+    # Session-constant capture facts for the UI's now-playing card.
+    recorder_status.samplerate = info.samplerate
+    recorder_status.output_format = fmt
     status_lock = threading.Lock()
     last_metric_status_publish = 0.0
 

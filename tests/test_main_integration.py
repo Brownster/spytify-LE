@@ -148,12 +148,16 @@ class TestMainIntegration:
 
         assert result.exit_code == 0
         data = json.loads(status_file.read_text(encoding="utf-8"))
-        assert data["schema_version"] == 1
+        assert data["schema_version"] == 2
         assert data["state"] == "stopped"
         assert data["last_error"] is None
         assert data["current_track"]["artist"] == "Ada"
         assert data["current_track"]["title"] == "Status Song"
+        assert data["current_track"]["art_uri"] == ""
         assert data["audio"]["queue_depth"] >= 0
+        # Session-constant capture facts for the now-playing card.
+        assert "samplerate" in data and isinstance(data["samplerate"], int)
+        assert "output_format" in data
 
     @patch('spotify_splitter.main.STATUS_HEARTBEAT_INTERVAL_SECONDS', 0.05)
     @patch('spotify_splitter.main.get_spotify_stream_info')
