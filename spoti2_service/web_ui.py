@@ -480,7 +480,8 @@ def render_index(
 
         <div class="checkbox-group" style="margin-top: 1rem;">
           <label>
-            <input type="checkbox" name="allow_overwrite" {checked(config.get("allow_overwrite", False))}>
+            <input type="hidden" name="allow_overwrite" value="0">
+            <input type="checkbox" name="allow_overwrite" value="on" {checked(config.get("allow_overwrite", False))}>
             <span>Allow Overwriting Existing Files</span>
           </label>
         </div>
@@ -506,7 +507,8 @@ def render_index(
 
         <div class="checkbox-group">
           <label>
-            <input type="checkbox" name="bundle_playlist" {checked(config.get("bundle_playlist", False))}>
+            <input type="hidden" name="bundle_playlist" value="0">
+            <input type="checkbox" name="bundle_playlist" value="on" {checked(config.get("bundle_playlist", False))}>
             <span>Bundle as Compilation Album</span>
           </label>
         </div>
@@ -548,19 +550,23 @@ def render_index(
 
         <div class="checkbox-group" style="margin-top: 1.5rem;">
           <label>
-            <input type="checkbox" name="enable_adaptive" {checked(config.get("enable_adaptive", True))}>
+            <input type="hidden" name="enable_adaptive" value="0">
+            <input type="checkbox" name="enable_adaptive" value="on" {checked(config.get("enable_adaptive", True))}>
             <span>Adaptive Buffers</span>
           </label>
           <label>
-            <input type="checkbox" name="enable_monitoring" {checked(config.get("enable_monitoring", False))}>
+            <input type="hidden" name="enable_monitoring" value="0">
+            <input type="checkbox" name="enable_monitoring" value="on" {checked(config.get("enable_monitoring", False))}>
             <span>Buffer Monitoring</span>
           </label>
           <label>
-            <input type="checkbox" name="enable_metrics" {checked(config.get("enable_metrics", False))}>
+            <input type="hidden" name="enable_metrics" value="0">
+            <input type="checkbox" name="enable_metrics" value="on" {checked(config.get("enable_metrics", False))}>
             <span>Performance Metrics</span>
           </label>
           <label>
-            <input type="checkbox" name="debug_mode" {checked(config.get("debug_mode", False))}>
+            <input type="hidden" name="debug_mode" value="0">
+            <input type="checkbox" name="debug_mode" value="on" {checked(config.get("debug_mode", False))}>
             <span>Debug Mode</span>
           </label>
         </div>

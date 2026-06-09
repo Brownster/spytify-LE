@@ -6,9 +6,50 @@ import json
 from pathlib import Path
 import subprocess
 
-from spoti2_service.service_app import RecorderSupervisor
+from spoti2_service.service_app import RecorderSupervisor, merge_web_config
 from spoti2_service.web_ui import render_index
 from spotify_splitter.user_config import DEFAULT_CONFIG
+
+
+def test_merge_web_config_partial_form_preserves_other_fields():
+    """A timer-only form must not wipe the LastFM key or other settings."""
+    config = {
+        "output": "/music",
+        "format": "flac",
+        "lastfm_api_key": "KEY123",
+        "allow_overwrite": True,
+        "enable_adaptive": True,
+        "playlist": "/p.m3u",
+    }
+    merged = merge_web_config(config, {"max_duration": ["90m"]})
+    assert merged["max_duration"] == "90m"
+    assert merged["lastfm_api_key"] == "KEY123"
+    assert merged["allow_overwrite"] is True
+    assert merged["enable_adaptive"] is True
+    assert merged["format"] == "flac"
+    assert merged["playlist"] == "/p.m3u"
+
+
+def test_merge_web_config_checkbox_toggle():
+    """Hidden-companion checkboxes toggle off; omitted booleans are preserved."""
+    off = merge_web_config(
+        {"allow_overwrite": True, "enable_metrics": True}, {"allow_overwrite": ["0"]}
+    )
+    assert off["allow_overwrite"] is False
+    assert off["enable_metrics"] is True  # not in this form -> preserved
+    on = merge_web_config({"allow_overwrite": False}, {"allow_overwrite": ["0", "on"]})
+    assert on["allow_overwrite"] is True
+
+
+def test_merge_web_config_clears_nullable_text():
+    """Empty nullable text clears to None; omitted text is preserved."""
+    merged = merge_web_config(
+        {"lastfm_api_key": "KEY", "playlist": "/old.m3u", "output": "/music"},
+        {"lastfm_api_key": [""], "playlist": [""]},
+    )
+    assert merged["lastfm_api_key"] is None
+    assert merged["playlist"] is None
+    assert merged["output"] == "/music"
 
 
 class FakeProcess:

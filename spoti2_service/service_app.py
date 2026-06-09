@@ -32,6 +32,46 @@ RECORDER_STATUS_PATH = LOG_DIR / "status.json"
 RECORDER_STATUS_STALE_SECONDS = 15.0
 
 
+def merge_web_config(config: Dict[str, Any], form: Dict[str, list]) -> Dict[str, Any]:
+    """Merge a posted web-UI form into ``config``, updating only present fields.
+
+    A form only carries the fields it owns, so partial forms (e.g. the timer-only
+    form, or a single toggle) must not wipe settings they omit. Checkboxes use a
+    hidden companion input of the same name, so an unchecked box still appears in
+    the form as a falsy value and can be turned off.
+    """
+    merged = dict(config)
+
+    # Empty string clears these to None; for the rest, empty falls back to existing.
+    nullable_text = {
+        "playlist", "bundle_album_art_uri", "playlist_base_path",
+        "max_duration", "lastfm_api_key",
+    }
+    text_fields = [
+        "output", "format", "player", "profile",
+        "playlist", "bundle_album_art_uri", "playlist_base_path",
+        "max_duration", "lastfm_api_key",
+    ]
+    for key in text_fields:
+        if key in form:
+            value = form[key][0].strip()
+            merged[key] = (value or None) if key in nullable_text else (value or merged.get(key))
+
+    bool_fields = [
+        "bundle_playlist", "enable_adaptive", "enable_monitoring",
+        "enable_metrics", "debug_mode", "allow_overwrite",
+    ]
+    for key in bool_fields:
+        if key in form:
+            merged[key] = form[key][-1] not in ("", "0", "off", "false")
+
+    for key in ("output", "playlist", "playlist_base_path"):
+        if merged.get(key):
+            merged[key] = str(Path(merged[key]).expanduser())
+
+    return merged
+
+
 def configure_logging(verbose: bool = False) -> None:
     """Configure logging to file and stdout."""
     handlers = [
@@ -225,6 +265,8 @@ class RecorderSupervisor:
 
         current_track = recorder_status.get("current_track")
         if isinstance(current_track, dict):
+            # Full track detail for the now-playing card (art, duration, position).
+            merged["track"] = current_track
             artist = current_track.get("artist") or ""
             title = current_track.get("title") or ""
             track_label = " - ".join(part for part in [artist, title] if part)
@@ -237,6 +279,8 @@ class RecorderSupervisor:
         merged["recorder_state"] = recorder_status.get("state")
         merged["last_error"] = recorder_status.get("last_error")
         merged["updated_at"] = recorder_status.get("updated_at")
+        merged["samplerate"] = recorder_status.get("samplerate", 0)
+        merged["output_format"] = recorder_status.get("output_format", "")
 
         timer = recorder_status.get("timer")
         if isinstance(timer, dict):
@@ -634,37 +678,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         form = parse_qs(payload)
 
         config = load_user_config(self.server.app.config_path)
-
-        def get_value(name: str, default: Optional[str] = None) -> Optional[str]:
-            return form.get(name, [default])[0]
-
-        def get_bool(name: str) -> bool:
-            return name in form
-
-        updates: Dict[str, object] = {
-            "output": get_value("output", config.get("output") or DEFAULT_CONFIG["output"]),
-            "format": get_value("format", config.get("format") or "mp3"),
-            "player": get_value("player", config.get("player")),
-            "profile": get_value("profile", config.get("profile")),
-            "playlist": get_value("playlist") or None,
-            "bundle_playlist": get_bool("bundle_playlist"),
-            "bundle_album_art_uri": get_value("bundle_album_art_uri") or None,
-            "playlist_base_path": get_value("playlist_base_path") or None,
-            "max_duration": get_value("max_duration") or None,
-            "enable_adaptive": get_bool("enable_adaptive"),
-            "enable_monitoring": get_bool("enable_monitoring"),
-            "enable_metrics": get_bool("enable_metrics"),
-            "debug_mode": get_bool("debug_mode"),
-            "lastfm_api_key": get_value("lastfm_api_key") or None,
-            "allow_overwrite": get_bool("allow_overwrite"),
-        }
-
-        merged = config.copy()
-        merged.update(updates)
-        # Normalize paths
-        for key in ("output", "playlist", "playlist_base_path"):
-            if merged.get(key):
-                merged[key] = str(Path(merged[key]).expanduser())
+        merged = merge_web_config(config, form)
 
         save_user_config(merged, self.server.app.config_path)
         self.server.app.supervisor.request_restart("Configuration updated via web UI")
