@@ -143,15 +143,20 @@ def write_status(path: Path, **overrides):
     path.write_text(json.dumps(data), encoding="utf-8")
 
 
-def test_build_command_passes_status_file(tmp_path):
+def test_build_command_passes_status_and_history_files(tmp_path):
+    from spoti2_service.service_app import RECORDER_HISTORY_PATH
+
     status_path = tmp_path / "status.json"
     supervisor = RecorderSupervisor(status_path=status_path)
 
     command = supervisor._build_command(DEFAULT_CONFIG.copy())
 
-    assert "--status-file" in command
     assert command[command.index("--status-file") + 1] == str(status_path)
-    assert command[-4:] == ["record", "--status-file", str(status_path), "--control-stdin"]
+    assert command[command.index("--history-file") + 1] == str(RECORDER_HISTORY_PATH)
+    assert command[-6:] == [
+        "record", "--status-file", str(status_path),
+        "--control-stdin", "--history-file", str(RECORDER_HISTORY_PATH),
+    ]
 
 
 def test_render_index_escapes_config_values():

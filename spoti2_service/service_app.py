@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs
 
+from spotify_splitter.track_history import TrackHistoryWriter
 from spotify_splitter.user_config import (
     DEFAULT_CONFIG,
     get_config_path,
@@ -29,6 +30,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_PATH = LOG_DIR / "service.log"
 RECORDER_LOG_PATH = LOG_DIR / "recorder.log"
 RECORDER_STATUS_PATH = LOG_DIR / "status.json"
+RECORDER_HISTORY_PATH = LOG_DIR / "history.jsonl"
 RECORDER_STATUS_STALE_SECONDS = 15.0
 
 
@@ -461,6 +463,7 @@ class RecorderSupervisor:
             record_args.extend(["--max-duration", config["max_duration"]])
         record_args.extend(["--status-file", str(self.status_path)])
         record_args.append("--control-stdin")
+        record_args.extend(["--history-file", str(RECORDER_HISTORY_PATH)])
 
         cmd.append("record")
         cmd.extend(record_args)
@@ -602,10 +605,21 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.app.supervisor.status())
         elif self.path == "/logs":
             self._serve_logs()
+        elif self.path == "/history":
+            self._serve_history()
         elif self.path == "/logo.png":
             self._serve_logo()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _serve_history(self) -> None:
+        """Serve recent per-track recording outcomes, newest first."""
+        try:
+            records = TrackHistoryWriter(RECORDER_HISTORY_PATH).read(limit=200)
+        except Exception as e:
+            logging.debug("Failed to read track history: %s", e)
+            records = []
+        self._send_json({"records": records})
 
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         if self.path == "/update":

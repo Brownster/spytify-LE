@@ -181,6 +181,17 @@ def render_index(
     .log-line {{ background: rgba(255,255,255,0.02); border-left-color: {p["border"]}; color: {p["text_muted"]}; }}
     .log-waiting {{ color: {p["text_muted"]}; text-align: center; padding: 2rem; font-style: italic; }}
 
+    /* Recorded tracks table */
+    table.history {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
+    table.history th, table.history td {{ text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid {p["border"]}; }}
+    table.history th {{ color: {p["text_muted"]}; font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; }}
+    table.history td.hist-icon {{ width: 1.5rem; text-align: center; }}
+    table.history th.hist-year, table.history td.hist-year {{ width: 4rem; font-variant-numeric: tabular-nums; }}
+    table.history td .hist-artist {{ color: {p["text_muted"]}; }}
+    table.history td.hist-empty {{ text-align: center; color: {p["text_muted"]}; font-style: italic; padding: 1.5rem; }}
+    tr.hist-failed td {{ color: {p["error"]}; }}
+    tr.hist-skipped td {{ color: {p["text_muted"]}; }}
+
     /* Forms (Settings / Advanced) */
     .form-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }}
     label {{ display: block; margin-bottom: 1rem; }}
@@ -254,6 +265,14 @@ def render_index(
         </div>
         <div class="log-container" id="log-display"><div class="log-waiting">Loading logs…</div></div>
         <div id="timer-display" class="help-text" style="display:none; margin-top:0.75rem; font-weight:600;"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Recorded Tracks</h2>
+        <table class="history">
+          <thead><tr><th class="hist-icon"></th><th>Track</th><th class="hist-year">Year</th><th>Genre</th></tr></thead>
+          <tbody id="history-rows"><tr><td colspan="4" class="hist-empty">No tracks recorded yet…</td></tr></tbody>
+        </table>
       </div>
     </section>
 
@@ -460,7 +479,56 @@ def render_index(
       }}).catch(e => console.error('status', e));
     }}
 
-    refreshLogs(); refreshStatus();
+    const HIST_ICON = {{
+      saved: '✅', skipped_incomplete: '⏭️', skipped_exists: '⏭️', failed: '❌'
+    }};
+
+    function refreshHistory() {{
+      fetch('/history').then(r => r.json()).then(data => {{
+        const tbody = document.getElementById('history-rows');
+        const records = data.records || [];
+        if (!records.length) {{
+          tbody.innerHTML = '<tr><td colspan="4" class="hist-empty">No tracks recorded yet…</td></tr>';
+          return;
+        }}
+        tbody.replaceChildren();
+        for (const rec of records) {{
+          const tr = document.createElement('tr');
+          const outcome = rec.outcome || '';
+          if (outcome === 'failed') tr.className = 'hist-failed';
+          else if (outcome.startsWith('skipped')) tr.className = 'hist-skipped';
+
+          const icon = document.createElement('td');
+          icon.className = 'hist-icon';
+          icon.textContent = HIST_ICON[outcome] || '•';
+          icon.title = (outcome + (rec.reason ? ': ' + rec.reason : ''));
+          tr.appendChild(icon);
+
+          const track = document.createElement('td');
+          const title = document.createElement('span');
+          title.textContent = rec.title || '(unknown)';
+          const artist = document.createElement('span');
+          artist.className = 'hist-artist';
+          artist.textContent = rec.artist ? '  —  ' + rec.artist : '';
+          track.appendChild(title); track.appendChild(artist);
+          tr.appendChild(track);
+
+          const year = document.createElement('td');
+          year.className = 'hist-year';
+          year.textContent = rec.year || '';
+          tr.appendChild(year);
+
+          const genre = document.createElement('td');
+          genre.textContent = rec.genre || '';
+          tr.appendChild(genre);
+
+          tbody.appendChild(tr);
+        }}
+      }}).catch(e => console.error('history', e));
+    }}
+
+    refreshLogs(); refreshStatus(); refreshHistory();
+    setInterval(refreshHistory, 5000);
     setInterval(refreshLogs, 3000);
     setInterval(refreshStatus, 2000);
     setInterval(paintProgress, 1000);
