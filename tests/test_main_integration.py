@@ -576,6 +576,11 @@ class TestMainIntegration:
         assert result.exit_code == 0
         mock_metrics_collector.assert_not_called()
         mock_health_monitor.assert_not_called()
+        call_args = mock_enhanced_stream.call_args
+        assert call_args.kwargs["health_monitor"] is None
+        assert call_args.kwargs["metrics_collector"] is None
+        assert call_args.kwargs["enable_health_monitoring"] is False
+        assert call_args.kwargs["enable_metrics_collection"] is False
     
     @patch('spotify_splitter.main.get_spotify_stream_info')
     def test_cli_argument_overrides(self, mock_get_stream_info):

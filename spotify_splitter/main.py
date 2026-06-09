@@ -545,8 +545,8 @@ def record(
         # Stats
         table.add_row("💾 Tracks Recorded:", str(ui_state["tracks_recorded"]))
         
-        # Buffer information (if adaptive management is enabled)
-        if effective_adaptive and buffer_manager:
+        # Buffer information (if debug monitoring is enabled)
+        if effective_monitoring and buffer_manager:
             health_color = {
                 "HEALTHY": "green",
                 "WARNING": "yellow", 
@@ -831,7 +831,7 @@ def record(
             publish_status("paused")
 
     def monitor_buffer_health():
-        if effective_adaptive and buffer_manager:
+        if effective_monitoring and buffer_manager:
             while engine.processing_is_alive():
                 try:
                     metrics = buffer_manager.monitor_utilization(audio_queue)
@@ -862,7 +862,7 @@ def record(
         "track_event_runner": run_track_events,
         "on_track_change": on_change,
         "on_playback_status": on_status,
-        "health_monitor_target": monitor_buffer_health if effective_adaptive and buffer_manager else None,
+        "health_monitor_target": monitor_buffer_health if effective_monitoring and buffer_manager else None,
         "control_input_stream": sys.stdin if control_stdin else None,
         "on_control_stop_requested": on_control_stop_requested,
         "heartbeat_interval": STATUS_HEARTBEAT_INTERVAL_SECONDS,
