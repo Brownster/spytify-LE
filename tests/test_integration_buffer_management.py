@@ -14,7 +14,6 @@ from spotify_splitter.config_profiles import (
     ProfileManager, ProfileType, SystemCapabilityDetector, SystemCapabilities
 )
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferStrategy
-from spotify_splitter.metrics_collector import MetricsCollector
 from spotify_splitter.error_recovery import ErrorRecoveryManager
 
 
@@ -84,53 +83,6 @@ class TestBufferManagementIntegration:
         assert "desktop" in profile.name.lower()
         assert profile.buffer_strategy == BufferStrategy.BALANCED
     
-    def test_metrics_collector_integration(self):
-        """Test integration between buffer manager and metrics collector."""
-        # Create metrics collector
-        metrics_collector = MetricsCollector(
-            collection_interval=0.1,  # Fast collection for testing
-            enable_debug_mode=True
-        )
-        
-        # Create buffer manager with metrics collector
-        buffer_manager = AdaptiveBufferManager(
-            initial_queue_size=200,
-            metrics_collector=metrics_collector
-        )
-        
-        # Verify metrics collector is linked
-        assert buffer_manager.metrics_collector is metrics_collector
-        
-        # Start metrics collection
-        metrics_collector.start_collection()
-        
-        try:
-            # Simulate some buffer operations
-            import time
-            import queue
-            
-            test_queue = queue.Queue(maxsize=200)
-            
-            # Add some items to queue
-            for i in range(50):
-                test_queue.put(f"item_{i}")
-            
-            # Monitor utilization
-            metrics = buffer_manager.monitor_utilization(test_queue)
-            assert metrics.utilization_percent > 0
-            assert metrics.queue_size == 50
-            
-            # Wait a bit for metrics collection
-            time.sleep(0.2)
-            
-            # Check that metrics were collected
-            debug_info = metrics_collector.get_debug_info()
-            assert debug_info['collecting']
-            assert debug_info['metrics_count'] > 0
-            
-        finally:
-            metrics_collector.stop_collection()
-    
     def test_error_recovery_integration(self):
         """Test integration between buffer manager and error recovery."""
         # Create error recovery manager
@@ -195,58 +147,37 @@ class TestBufferManagementIntegration:
         profile = ProfileManager.select_optimal_profile(capabilities)
         
         # Step 3: Create adaptive components
-        metrics_collector = MetricsCollector(
-            collection_interval=profile.collection_interval,
-            enable_debug_mode=profile.enable_debug_mode
-        )
-        
         buffer_manager = AdaptiveBufferManager(
             initial_queue_size=profile.queue_size,
             min_size=50,
             max_size=1000,
-            metrics_collector=metrics_collector
         )
-        
+
         error_recovery = ErrorRecoveryManager(
             max_retries=profile.max_reconnection_attempts
         )
-        
+
         # Step 4: Verify integration
         assert buffer_manager.current_queue_size == profile.queue_size
-        assert buffer_manager.metrics_collector is metrics_collector
         assert error_recovery.max_retries == profile.max_reconnection_attempts
-        
+
         # Step 5: Test runtime behavior
-        metrics_collector.start_collection()
-        
-        try:
-            import queue
-            import time
-            
-            test_queue = queue.Queue(maxsize=profile.queue_size)
-            
-            # Simulate buffer usage
-            for i in range(profile.queue_size // 2):
-                test_queue.put(f"data_{i}")
-            
-            # Monitor and adjust
-            metrics = buffer_manager.monitor_utilization(test_queue)
-            new_size = buffer_manager.adjust_buffer_size(metrics)
-            
-            # Verify monitoring worked
-            assert metrics.utilization_percent > 0
-            assert metrics.queue_size == profile.queue_size // 2
-            
-            # Wait for metrics collection
-            time.sleep(0.1)
-            
-            # Verify metrics were collected
-            collected_metrics = metrics_collector.get_metric_values('buffer_manager.current_queue_size')
-            assert len(collected_metrics) > 0
-            
-        finally:
-            metrics_collector.stop_collection()
-    
+        import queue
+
+        test_queue = queue.Queue(maxsize=profile.queue_size)
+
+        # Simulate buffer usage
+        for i in range(profile.queue_size // 2):
+            test_queue.put(f"data_{i}")
+
+        # Monitor and adjust
+        metrics = buffer_manager.monitor_utilization(test_queue)
+        buffer_manager.adjust_buffer_size(metrics)
+
+        # Verify monitoring worked
+        assert metrics.utilization_percent > 0
+        assert metrics.queue_size == profile.queue_size // 2
+
     def test_cli_argument_override_integration(self):
         """Test that CLI arguments properly override profile defaults."""
         # Get base profile
@@ -267,16 +198,10 @@ class TestBufferManagementIntegration:
         buffer_manager = AdaptiveBufferManager(
             initial_queue_size=effective_queue_size
         )
-        
-        metrics_collector = MetricsCollector(
-            enable_debug_mode=effective_debug
-        )
-        
+
         # Verify CLI overrides were applied
         assert buffer_manager.current_queue_size == cli_queue_size
         assert buffer_manager.current_queue_size != base_profile.queue_size
-        assert metrics_collector.enable_debug_mode == cli_debug_mode
-        assert metrics_collector.enable_debug_mode != base_profile.enable_debug_mode
     
     def test_profile_serialization_integration(self):
         """Test profile serialization for configuration persistence."""

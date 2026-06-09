@@ -26,7 +26,6 @@ from pathlib import Path
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferMetrics, HealthStatus
 from spotify_splitter.audio import EnhancedAudioStream
 from spotify_splitter.error_recovery import ErrorRecoveryManager
-from spotify_splitter.metrics_collector import MetricsCollector
 from spotify_splitter.segmenter import SegmentManager
 
 
@@ -252,11 +251,6 @@ class ExtendedRecordingSessionTest:
             backoff_factor=1.5
         )
         
-        metrics_collector = MetricsCollector(
-            collection_interval=60.0,  # Collect every minute
-            enable_debug_mode=True
-        )
-        
         # Create audio processing queue
         audio_queue = queue.Queue(maxsize=buffer_manager.current_queue_size)
         
@@ -388,7 +382,6 @@ class ExtendedRecordingSessionTest:
                     time.sleep(0.01)
         
         # Start metrics collection
-        metrics_collector.start_collection()
         
         # Start audio processing threads
         producer_thread = threading.Thread(target=audio_producer, daemon=True)
@@ -415,11 +408,9 @@ class ExtendedRecordingSessionTest:
         
         # Stop monitoring and metrics collection
         monitor.stop_monitoring()
-        metrics_collector.stop_collection()
         
         # Get final results
         session_summary = monitor.get_session_summary()
-        debug_info = metrics_collector.get_debug_info()
         
         # Calculate final metrics
         self.results = {
@@ -441,7 +432,6 @@ class ExtendedRecordingSessionTest:
             'underrun_rate_per_hour': session_stats['buffer_underruns'] / (actual_duration / 3600),
             'error_rate_per_hour': session_stats['error_events'] / (actual_duration / 3600),
             'session_monitoring': session_summary,
-            'metrics_collection': debug_info,
             'final_buffer_size': buffer_manager.current_queue_size,
             'completion_rate': session_stats['tracks_processed'] / self.track_count
         }
@@ -465,12 +455,6 @@ class MemoryLeakDetectionTest:
             min_size=50,
             max_size=1000
         )
-        
-        metrics_collector = MetricsCollector(
-            collection_interval=10.0,
-            enable_debug_mode=True
-        )
-        
         # Memory tracking
         memory_samples = []
         object_counts = []
@@ -542,8 +526,6 @@ class MemoryLeakDetectionTest:
                             pass
                     
                     # Record some metrics
-                    metrics_collector.record_counter('frames_processed', frame_count)
-                    metrics_collector.record_gauge('queue_size', audio_queue.qsize())
                     
                     time.sleep(0.01)  # Brief pause
                     
@@ -552,7 +534,6 @@ class MemoryLeakDetectionTest:
                     time.sleep(0.01)
         
         # Start monitoring and workload
-        metrics_collector.start_collection()
         
         monitor_thread = threading.Thread(target=memory_monitor, daemon=True)
         workload_thread = threading.Thread(target=workload_generator, daemon=True)
@@ -565,7 +546,6 @@ class MemoryLeakDetectionTest:
         
         # Stop all activity
         active.clear()
-        metrics_collector.stop_collection()
         
         # Wait for threads
         monitor_thread.join(timeout=2.0)

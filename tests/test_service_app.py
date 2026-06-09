@@ -60,10 +60,10 @@ def test_merge_web_config_partial_form_preserves_other_fields():
 def test_merge_web_config_checkbox_toggle():
     """Hidden-companion checkboxes toggle off; omitted booleans are preserved."""
     off = merge_web_config(
-        {"allow_overwrite": True, "enable_metrics": True}, {"allow_overwrite": ["0"]}
+        {"allow_overwrite": True, "enable_monitoring": True}, {"allow_overwrite": ["0"]}
     )
     assert off["allow_overwrite"] is False
-    assert off["enable_metrics"] is True  # not in this form -> preserved
+    assert off["enable_monitoring"] is True  # not in this form -> preserved
     on = merge_web_config({"allow_overwrite": False}, {"allow_overwrite": ["0", "on"]})
     assert on["allow_overwrite"] is True
 

@@ -20,8 +20,6 @@ from .audio import AudioStream, EnhancedAudioStream
 from .buffer_management import AdaptiveBufferManager
 from .buffer_health_monitor import BufferHealthMonitor
 from .error_recovery import ErrorRecoveryManager
-from .metrics_collector import MetricsCollector
-from .performance_dashboard import PerformanceDashboard, DashboardConfig
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
 from .engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig, RecorderError
 from .segmenter import SegmentManager, OUTPUT_DIR
@@ -156,13 +154,8 @@ def record(
     ),
     enable_monitoring: bool = typer.Option(
         True,
-        "--monitoring/--no-monitoring", 
+        "--monitoring/--no-monitoring",
         help="Enable debug buffer health monitoring when --debug-mode is active",
-    ),
-    enable_metrics: bool = typer.Option(
-        True,
-        "--metrics/--no-metrics",
-        help="Enable debug performance metrics collection when --debug-mode is active",
     ),
     debug_mode: bool = typer.Option(
         False,
@@ -248,7 +241,6 @@ def record(
     profile = resolve_param("profile", profile)
     enable_adaptive = resolve_param("enable_adaptive", enable_adaptive)
     enable_monitoring = resolve_param("enable_monitoring", enable_monitoring)
-    enable_metrics = resolve_param("enable_metrics", enable_metrics)
     debug_mode = resolve_param("debug_mode", debug_mode)
     max_buffer_size = resolve_param("max_buffer_size", max_buffer_size)
     min_buffer_size = resolve_param("min_buffer_size", min_buffer_size)
@@ -329,12 +321,7 @@ def record(
             and enable_monitoring
             and config_profile.enable_health_monitoring
         )
-        effective_metrics = (
-            effective_debug
-            and enable_metrics
-            and config_profile.enable_metrics_collection
-        )
-        
+
         logging.info(f"Effective settings: queue_size={effective_queue_size}, blocksize={effective_blocksize}, "
                     f"latency={effective_latency}, adaptive={effective_adaptive}, monitoring={effective_monitoring}")
         
@@ -347,59 +334,30 @@ def record(
         effective_adaptive = enable_adaptive
         effective_debug = debug_mode
         effective_monitoring = effective_debug and enable_monitoring
-        effective_metrics = effective_debug and enable_metrics
 
     # Initialize adaptive buffer management components
     buffer_manager = None
     health_monitor = None
     error_recovery = None
-    metrics_collector = None
-    performance_dashboard = None
-    
+
     try:
         if effective_adaptive:
             buffer_manager = AdaptiveBufferManager(
                 initial_queue_size=effective_queue_size,
                 min_size=min_buffer_size,
                 max_size=max_buffer_size,
-                metrics_collector=None  # Will be set after metrics_collector is created
             )
             logging.info("Adaptive buffer manager initialized")
-        
+
         if effective_monitoring and buffer_manager:
             health_monitor = BufferHealthMonitor(buffer_manager=buffer_manager)
             logging.info("Buffer health monitor initialized")
-        
+
         error_recovery = ErrorRecoveryManager(
             max_retries=config_profile.max_reconnection_attempts if 'config_profile' in locals() else 5
         )
         logging.info("Error recovery manager initialized")
-        
-        if effective_metrics:
-            metrics_collector = MetricsCollector(
-                collection_interval=config_profile.collection_interval if 'config_profile' in locals() else 1.0,
-                enable_debug_mode=effective_debug
-            )
-            # Link buffer manager to metrics collector
-            if buffer_manager:
-                buffer_manager.metrics_collector = metrics_collector
-            if error_recovery:
-                error_recovery.metrics_collector = metrics_collector
-            logging.info("Metrics collector initialized")
-            
-            # Initialize performance dashboard if debug mode is enabled
-            if effective_debug:
-                dashboard_config = DashboardConfig(
-                    update_interval=2.0,
-                    enable_alerts=True,
-                    enable_recommendations=True
-                )
-                performance_dashboard = PerformanceDashboard(
-                    metrics_collector=metrics_collector,
-                    config=dashboard_config
-                )
-                logging.info("Performance dashboard initialized")
-            
+
     except Exception as e:
         logging.error(f"Error initializing adaptive components: {e}")
         # Continue with basic functionality
@@ -421,7 +379,6 @@ def record(
             latency=effective_latency,
             enable_adaptive=effective_adaptive,
             enable_monitoring=effective_monitoring,
-            enable_metrics=effective_metrics,
             debug_mode=effective_debug,
             min_buffer_size=min_buffer_size,
             max_buffer_size=max_buffer_size,
@@ -756,12 +713,7 @@ def record(
     ui_state["adaptive_adjustments"] = 0
     ui_state["emergency_expansions"] = 0
     engine.set_status_publisher(publish_status)
-    engine.configure_post_run_cleanup(
-        metrics_collector=metrics_collector,
-        performance_dashboard=performance_dashboard,
-        tag_output=tag_output,
-        final_diagnostics=effective_debug,
-    )
+    engine.configure_post_run_cleanup(tag_output=tag_output)
     publish_status("waiting")
 
     def graceful_shutdown() -> None:
@@ -779,7 +731,6 @@ def record(
                 buffer_manager=buffer_manager,
                 error_recovery=error_recovery,
                 health_monitor=health_monitor,
-                metrics_collector=metrics_collector,
                 samplerate=info.samplerate,
                 channels=info.channels,
                 q=audio_queue,
@@ -789,7 +740,6 @@ def record(
                 ui_callback=enhanced_ui_callback,
                 enable_adaptive_management=effective_adaptive,
                 enable_health_monitoring=effective_monitoring,
-                enable_metrics_collection=effective_metrics,
             )
 
         logging.info("Using basic audio stream")
@@ -862,20 +812,6 @@ def record(
         "on_timer_tick": on_timer_tick,
         "on_timer_expired": on_timer_expired,
     }
-
-    # Start metrics collection if enabled
-    if metrics_collector:
-        try:
-            metrics_collector.start_collection()
-            logging.info("Metrics collection started")
-            
-            # Start performance dashboard if enabled
-            if performance_dashboard:
-                performance_dashboard.start_monitoring()
-                logging.info("Performance dashboard started")
-            
-        except Exception as e:
-            logging.error(f"Error starting metrics collection: {e}")
 
     try:
         headless_mode = os.environ.get("RICH_FORCE_TERMINAL") == "0"
@@ -1047,11 +983,6 @@ def configure(
         "--monitoring/--no-monitoring",
         help="Toggle buffer health monitoring by default",
     ),
-    enable_metrics: Optional[bool] = typer.Option(
-        None,
-        "--metrics/--no-metrics",
-        help="Toggle performance metrics collection by default",
-    ),
     debug_mode: Optional[bool] = typer.Option(
         None,
         "--debug/--no-debug",
@@ -1164,11 +1095,6 @@ def configure(
         enable_monitoring,
         "Enable buffer health monitoring by default?",
     )
-    updates["enable_metrics"] = prompt_bool(
-        "enable_metrics",
-        enable_metrics,
-        "Enable metrics collection by default?",
-    )
     updates["debug_mode"] = prompt_bool(
         "debug_mode",
         debug_mode,
@@ -1211,7 +1137,6 @@ def configure(
         "profile",
         "enable_adaptive",
         "enable_monitoring",
-        "enable_metrics",
         "debug_mode",
         "playlist",
         "bundle_playlist",

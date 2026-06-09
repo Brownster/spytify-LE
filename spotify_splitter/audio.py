@@ -13,7 +13,6 @@ from datetime import datetime
 from .buffer_management import AdaptiveBufferManager, BufferHealth, HealthStatus
 from .buffer_health_monitor import BufferHealthMonitor
 from .error_recovery import ErrorRecoveryManager, RecoveryAction
-from .metrics_collector import MetricsCollector
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +125,6 @@ class EnhancedAudioStream(AudioStream):
         buffer_manager: Optional[AdaptiveBufferManager] = None,
         error_recovery: Optional[ErrorRecoveryManager] = None,
         health_monitor: Optional[BufferHealthMonitor] = None,
-        metrics_collector: Optional[MetricsCollector] = None,
         samplerate: int = 44100,
         channels: int = 2,
         q: Optional[Queue] = None,
@@ -136,7 +134,6 @@ class EnhancedAudioStream(AudioStream):
         ui_callback: Optional[Callable] = None,
         enable_adaptive_management: bool = True,
         enable_health_monitoring: bool = True,
-        enable_metrics_collection: bool = True,
         **kwargs
     ):
         """
@@ -157,13 +154,11 @@ class EnhancedAudioStream(AudioStream):
         )
         self.error_recovery = error_recovery or ErrorRecoveryManager()
         self.health_monitor = health_monitor
-        self.metrics_collector = metrics_collector
-        
+
         # Configuration flags
         self.enable_adaptive_management = enable_adaptive_management
         self.enable_health_monitoring = enable_health_monitoring
-        self.enable_metrics_collection = enable_metrics_collection
-        
+
         # Stream state tracking
         self.reconnection_attempts = 0
         self.max_reconnection_attempts = 5
@@ -199,8 +194,8 @@ class EnhancedAudioStream(AudioStream):
             latency = latency or adaptive_settings.latency
         
         # Initialize base AudioStream (filter out unknown kwargs)
-        base_kwargs = {k: v for k, v in kwargs.items() 
-                      if k not in ['enable_error_recovery', 'enable_adaptive_management', 
+        base_kwargs = {k: v for k, v in kwargs.items()
+                      if k not in ['enable_error_recovery', 'enable_adaptive_management',
                                    'enable_health_monitoring', 'enable_metrics_collection']}
         super().__init__(
             monitor_name=monitor_name,
@@ -218,13 +213,9 @@ class EnhancedAudioStream(AudioStream):
         if self.enable_health_monitoring and self.health_monitor:
             self.health_monitor.start_monitoring(self.q)
         
-        # Register with metrics collector if enabled
-        if self.enable_metrics_collection and self.metrics_collector:
-            self.metrics_collector.register_component('audio_stream', self._get_metrics_data)
-        
         logger.info(
-            "EnhancedAudioStream initialized: adaptive=%s, monitoring=%s, metrics=%s, queue_size=%d",
-            enable_adaptive_management, enable_health_monitoring, enable_metrics_collection, queue_size
+            "EnhancedAudioStream initialized: adaptive=%s, monitoring=%s, queue_size=%d",
+            enable_adaptive_management, enable_health_monitoring, queue_size
         )
     
     def _adaptive_callback(self, indata, frames, time_info, status):

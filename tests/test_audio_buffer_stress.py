@@ -23,7 +23,6 @@ import os
 from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferMetrics, HealthStatus
 from spotify_splitter.audio import EnhancedAudioStream
 from spotify_splitter.error_recovery import ErrorRecoveryManager
-from spotify_splitter.metrics_collector import MetricsCollector
 
 
 class StressTestEnvironment:

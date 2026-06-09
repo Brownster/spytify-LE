@@ -59,7 +59,7 @@ def merge_web_config(config: Dict[str, Any], form: Dict[str, list]) -> Dict[str,
 
     bool_fields = [
         "bundle_playlist", "enable_adaptive", "enable_monitoring",
-        "enable_metrics", "debug_mode", "allow_overwrite",
+        "debug_mode", "allow_overwrite",
     ]
     for key in bool_fields:
         if key in form:
@@ -434,16 +434,9 @@ class RecorderSupervisor:
             cmd.extend(["--config", self.config_path])
 
         record_args: list[str] = []
-        metrics_enabled = config.get("enable_metrics")
         monitoring_enabled = config.get("enable_monitoring")
-
-        if metrics_enabled is None:
-            metrics_enabled = not self.disable_metrics
         if monitoring_enabled is None:
             monitoring_enabled = not self.disable_metrics
-
-        if not metrics_enabled:
-            record_args.append("--no-metrics")
 
         if not monitoring_enabled:
             record_args.append("--no-monitoring")

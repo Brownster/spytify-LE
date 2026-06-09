@@ -94,7 +94,6 @@ class AdaptiveBufferManager:
         adjustment_threshold: float = 0.8,
         emergency_threshold: float = 0.95,
         cooldown_seconds: float = 2.0,
-        metrics_collector=None
     ):
         """
         Initialize the adaptive buffer manager.
@@ -118,8 +117,7 @@ class AdaptiveBufferManager:
         self.adjustment_threshold = adjustment_threshold
         self.emergency_threshold = emergency_threshold
         self.cooldown_seconds = cooldown_seconds
-        self.metrics_collector = metrics_collector
-        
+
         # Monitoring data
         self.utilization_history: Deque[float] = deque(maxlen=100)
         self.latency_history: Deque[float] = deque(maxlen=50)
@@ -129,20 +127,13 @@ class AdaptiveBufferManager:
         self.emergency_expansions = 0
         self.adjustment_count = 0
         self.emergency_expansion_count = 0
-        
-        # Metrics collection
-        self.metrics_collector = metrics_collector
-        
+
         # Thread safety
         self._lock = threading.RLock()
-        
-        # Register with metrics collector if provided
-        if self.metrics_collector:
-            self.metrics_collector.register_component('buffer_manager', self._get_metrics_data)
-        
+
         logger.debug(
-            "AdaptiveBufferManager initialized: size=%d, min=%d, max=%d, metrics=%s",
-            initial_queue_size, min_size, max_size, metrics_collector is not None
+            "AdaptiveBufferManager initialized: size=%d, min=%d, max=%d",
+            initial_queue_size, min_size, max_size
         )
     
     def monitor_utilization(self, queue: Queue) -> BufferMetrics:

@@ -14,7 +14,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "profile": "auto",
     "enable_adaptive": True,
     "enable_monitoring": True,
-    "enable_metrics": True,
     "debug_mode": False,
     "playlist": None,
     "bundle_playlist": False,

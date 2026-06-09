@@ -27,7 +27,6 @@ def make_config(**overrides):
         "latency": 0.1,
         "enable_adaptive": True,
         "enable_monitoring": True,
-        "enable_metrics": False,
         "debug_mode": False,
         "min_buffer_size": 50,
         "max_buffer_size": 1000,
@@ -131,36 +130,6 @@ class FakeStream:
         self.exit_calls += 1
 
 
-class FakeDiagnosticReport:
-    def __init__(self):
-        self.summary = {
-            "total_metrics": 12,
-            "collection_uptime_seconds": 3.5,
-        }
-        self.recommendations = ["Keep buffer steady"]
-
-
-class FakeMetricsCollector:
-    def __init__(self):
-        self.stop_calls = 0
-        self.report_calls = 0
-
-    def stop_collection(self):
-        self.stop_calls += 1
-
-    def generate_diagnostic_report(self):
-        self.report_calls += 1
-        return FakeDiagnosticReport()
-
-
-class FakePerformanceDashboard:
-    def __init__(self):
-        self.stop_calls = 0
-
-    def stop_monitoring(self):
-        self.stop_calls += 1
-
-
 def test_engine_creates_runtime_queues_from_config():
     engine = RecorderEngine(make_config(queue_size=123))
 
@@ -237,27 +206,19 @@ def test_engine_start_unwinds_stream_on_partial_startup_failure(monkeypatch):
     assert engine.is_stopped() is True
 
 
-def test_engine_finalize_post_run_stops_components_and_tags_output():
+def test_engine_finalize_post_run_closes_playlist_and_tags_output():
     tag_calls = []
     playlist_path = Path("/tmp/session.m3u")
     engine = RecorderEngine(make_config(playlist_path=playlist_path))
     manager = FakeManager()
-    metrics = FakeMetricsCollector()
-    dashboard = FakePerformanceDashboard()
     engine.attach_segment_manager(manager, FakeThread())
     engine.configure_post_run_cleanup(
-        metrics_collector=metrics,
-        performance_dashboard=dashboard,
         tag_output=lambda output_dir, playlist: tag_calls.append((output_dir, playlist)),
-        final_diagnostics=True,
     )
 
     engine.finalize_post_run()
-    engine.finalize_post_run()
+    engine.finalize_post_run()  # idempotent
 
-    assert dashboard.stop_calls == 1
-    assert metrics.stop_calls == 1
-    assert metrics.report_calls == 1
     assert manager.close_calls == 1
     assert tag_calls == [(Path("/tmp/out"), playlist_path)]
 

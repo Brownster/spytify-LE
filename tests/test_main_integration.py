@@ -489,67 +489,12 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
-    @patch('spotify_splitter.main.MetricsCollector')
-    def test_metrics_collection_integration(
-        self, mock_metrics_collector, mock_segment_manager, mock_enhanced_stream,
-        mock_track_events, mock_get_stream_info
-    ):
-        """Test metrics collection integration."""
-        # Setup mocks
-        mock_get_stream_info.return_value = self.mock_stream_info
-        
-        mock_collector_instance = Mock()
-        mock_metrics_collector.return_value = mock_collector_instance
-        mock_collector_instance.start_collection = Mock()
-        mock_collector_instance.stop_collection = Mock()
-        mock_collector_instance.generate_diagnostic_report = Mock()
-        
-        mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
-        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
-        mock_stream_instance.__exit__ = Mock(return_value=None)
-        
-        mock_manager_instance = Mock()
-        mock_segment_manager.return_value = mock_manager_instance
-        mock_manager_instance.flush_cache = Mock()
-        mock_manager_instance.run = Mock()
-        mock_manager_instance.shutdown_cleanup = Mock()
-        
-        def mock_track_events_func(*args, **kwargs):
-            time.sleep(0.1)
-            raise KeyboardInterrupt()
-        
-        mock_track_events.side_effect = mock_track_events_func
-        
-        # Test with metrics enabled and debug mode
-        result = self.runner.invoke(app, [
-            'record',
-            '--metrics',
-            '--debug-mode',
-            '--output', self.temp_dir
-        ])
-        
-        assert result.exit_code == 0
-        
-        # Verify metrics collector was initialized and started
-        mock_metrics_collector.assert_called_once()
-        mock_collector_instance.start_collection.assert_called_once()
-        mock_collector_instance.stop_collection.assert_called_once()
-        
-        # Verify diagnostic report was generated in debug mode
-        mock_collector_instance.generate_diagnostic_report.assert_called_once()
-
-    @patch('spotify_splitter.main.get_spotify_stream_info')
-    @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
-    @patch('spotify_splitter.main.SegmentManager')
     @patch('spotify_splitter.main.BufferHealthMonitor')
-    @patch('spotify_splitter.main.MetricsCollector')
-    def test_metrics_and_monitoring_require_debug_mode(
-        self, mock_metrics_collector, mock_health_monitor, mock_segment_manager,
+    def test_monitoring_requires_debug_mode(
+        self, mock_health_monitor, mock_segment_manager,
         mock_enhanced_stream, mock_track_events, mock_get_stream_info
     ):
-        """Test telemetry flags do not start background telemetry outside debug mode."""
+        """Buffer health monitoring must not start outside debug mode."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
@@ -572,20 +517,16 @@ class TestMainIntegration:
         result = self.runner.invoke(app, [
             'record',
             '--profile', 'desktop',
-            '--metrics',
             '--monitoring',
             '--output', self.temp_dir
         ])
 
         assert result.exit_code == 0
-        mock_metrics_collector.assert_not_called()
         mock_health_monitor.assert_not_called()
         call_args = mock_enhanced_stream.call_args
         assert call_args.kwargs["health_monitor"] is None
-        assert call_args.kwargs["metrics_collector"] is None
         assert call_args.kwargs["enable_health_monitoring"] is False
-        assert call_args.kwargs["enable_metrics_collection"] is False
-    
+
     @patch('spotify_splitter.main.get_spotify_stream_info')
     def test_cli_argument_overrides(self, mock_get_stream_info):
         """Test that CLI arguments properly override profile defaults."""

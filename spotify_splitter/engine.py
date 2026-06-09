@@ -100,7 +100,6 @@ class RecorderEngineConfig:
     latency: float
     enable_adaptive: bool
     enable_monitoring: bool
-    enable_metrics: bool
     debug_mode: bool
     min_buffer_size: int
     max_buffer_size: int
@@ -166,25 +165,16 @@ class RecorderEngine:
         self._timer_start: Optional[float] = None
         self._timer_elapsed_seconds = 0
         self._timer_remaining_seconds = self._timer_duration_seconds
-        self._metrics_collector: Optional[object] = None
-        self._performance_dashboard: Optional[object] = None
         self._tag_output: Optional[TagOutputCallback] = None
-        self._final_diagnostics_enabled = False
 
     def set_status_publisher(self, status_publisher: StatusPublisher) -> None:
         self._status_publisher = status_publisher
 
     def configure_post_run_cleanup(
         self,
-        metrics_collector: Optional[object] = None,
-        performance_dashboard: Optional[object] = None,
         tag_output: Optional[TagOutputCallback] = None,
-        final_diagnostics: bool = False,
     ) -> None:
-        self._metrics_collector = metrics_collector
-        self._performance_dashboard = performance_dashboard
         self._tag_output = tag_output
-        self._final_diagnostics_enabled = final_diagnostics
 
     def attach_segment_manager(
         self,
@@ -460,8 +450,6 @@ class RecorderEngine:
         with self._finalize_lock:
             if self._finalize_done:
                 return
-            self._stop_performance_dashboard()
-            self._stop_metrics_collection()
             self._close_playlist()
             self._run_tagger()
             self._finalize_done = True
@@ -507,44 +495,6 @@ class RecorderEngine:
             logging.debug("Error stopping audio stream: %s", e)
         finally:
             self._audio_stream_entered = False
-
-    def _stop_performance_dashboard(self) -> None:
-        if not self._performance_dashboard:
-            return
-        try:
-            self._performance_dashboard.stop_monitoring()
-            logging.info("Performance dashboard stopped")
-        except Exception as e:
-            logging.error("Error stopping performance dashboard: %s", e)
-
-    def _stop_metrics_collection(self) -> None:
-        if not self._metrics_collector:
-            return
-        try:
-            self._metrics_collector.stop_collection()
-            logging.info("Metrics collection stopped")
-            if self._final_diagnostics_enabled:
-                self._log_final_diagnostics()
-        except Exception as e:
-            logging.error("Error stopping metrics collection: %s", e)
-
-    def _log_final_diagnostics(self) -> None:
-        if not self._metrics_collector:
-            return
-        try:
-            report = self._metrics_collector.generate_diagnostic_report()
-            logging.info("Session performance summary:")
-            logging.info("  - Total metrics collected: %s", report.summary.get("total_metrics", 0))
-            logging.info(
-                "  - Collection uptime: %.1fs",
-                report.summary.get("collection_uptime_seconds", 0),
-            )
-            if report.recommendations:
-                logging.info("  - Recommendations:")
-                for recommendation in report.recommendations[:3]:
-                    logging.info("    * %s", recommendation)
-        except Exception as e:
-            logging.debug("Error generating final report: %s", e)
 
     def _close_playlist(self) -> None:
         if not self._segment_manager or not hasattr(self._segment_manager, "close_playlist"):

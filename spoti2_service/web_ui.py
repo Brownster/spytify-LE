@@ -347,11 +347,6 @@ def render_index(
             <span>Buffer Monitoring (debug)</span>
           </label>
           <label>
-            <input type="hidden" name="enable_metrics" value="0">
-            <input type="checkbox" name="enable_metrics" value="on" {checked(config.get("enable_metrics", False))}>
-            <span>Performance Metrics (debug)</span>
-          </label>
-          <label>
             <input type="hidden" name="debug_mode" value="0">
             <input type="checkbox" name="debug_mode" value="on" {checked(config.get("debug_mode", False))}>
             <span>Debug Mode</span>

@@ -87,7 +87,6 @@ class ErrorRecoveryManager:
         backoff_factor: float = 1.5,
         max_backoff: float = 30.0,
         error_history_size: int = 100,
-        metrics_collector=None
     ):
         """
         Initialize the error recovery manager.
@@ -101,16 +100,12 @@ class ErrorRecoveryManager:
         self.max_retries = max_retries
         self.backoff_factor = backoff_factor
         self.max_backoff = max_backoff
-        self.metrics_collector = metrics_collector
-        
+
         # Error tracking
         self.error_history: deque = deque(maxlen=error_history_size)
         self.error_counts: Dict[str, int] = {}
         self.recovery_stats: Dict[RecoveryAction, Dict[str, int]] = {}
-        
-        # Metrics collection
-        self.metrics_collector = metrics_collector
-        
+
         # Recovery strategies mapping
         self.recovery_strategies = self._initialize_recovery_strategies()
         
@@ -124,14 +119,10 @@ class ErrorRecoveryManager:
         
         # Thread safety
         self._lock = threading.RLock()
-        
-        # Register with metrics collector if provided
-        if self.metrics_collector:
-            self.metrics_collector.register_component('error_recovery', self._get_metrics_data)
-        
+
         logger.debug(
-            "ErrorRecoveryManager initialized: max_retries=%d, backoff_factor=%.2f, metrics=%s",
-            max_retries, backoff_factor, metrics_collector is not None
+            "ErrorRecoveryManager initialized: max_retries=%d, backoff_factor=%.2f",
+            max_retries, backoff_factor
         )
     
     def _initialize_recovery_strategies(self) -> Dict[str, RecoveryAction]:
@@ -194,19 +185,7 @@ class ErrorRecoveryManager:
             
             # Record the error
             self._record_error(error_event)
-            
-            # Record error in metrics collector if available
-            if self.metrics_collector:
-                self.metrics_collector.record_error(
-                    error_type, 
-                    error_message, 
-                    {
-                        'context': context,
-                        'severity': severity.value,
-                        'recovery_action': recovery_action.value
-                    }
-                )
-            
+
             logger.warning(
                 "Error handled: %s in %s -> %s (severity: %s)",
                 error_type, context, recovery_action.value, severity.value
