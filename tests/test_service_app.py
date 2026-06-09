@@ -9,31 +9,7 @@ import subprocess
 from spoti2_service.service_app import (
     RecorderSupervisor,
     merge_web_config,
-    filter_recorder_logs,
 )
-
-
-def test_filter_recorder_logs_shows_saved_track():
-    """The save line is 'Saved /path' (no colon) and must appear in the panel."""
-    lines = ["INFO: Saved /home/marc/Music/Artist/Album/01 - Track.mp3\n"]
-    html = filter_recorder_logs(lines, verbose=False)
-    assert "log-success" in html
-    assert "01 - Track.mp3" in html
-    assert "Waiting for tracks" not in html
-
-
-def test_filter_recorder_logs_skips_and_errors():
-    lines = [
-        "INFO: Skipping incomplete track 'X' (captured 5000ms of expected 200000ms)\n",
-        "ERROR: Recorder failed\n",
-    ]
-    html = filter_recorder_logs(lines, verbose=False)
-    assert "log-warning" in html  # skip
-    assert "log-error" in html
-
-
-def test_filter_recorder_logs_waiting_when_empty():
-    assert "Waiting for tracks" in filter_recorder_logs(["DEBUG: noise\n"], verbose=False)
 from spoti2_service.web_ui import render_index
 from spotify_splitter.user_config import DEFAULT_CONFIG
 
@@ -166,13 +142,12 @@ def test_render_index_escapes_config_values():
     config["lastfm_api_key"] = '<script>alert("x")</script>'
     status = {"state": "running", "details": "<b>recording</b>"}
 
-    html = render_index(config, status, verbose_logging=True)
+    html = render_index(config, status)
 
     assert "Spytify-LE - Linux Audio Recorder" in html
     # Config values are server-rendered into attributes and must be escaped.
     assert '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;' in html
     assert '&quot;/tmp/music&quot;' in html
-    assert 'name="verbose" checked' in html
     # Live state/details are populated client-side via textContent, not server HTML.
     assert "<b>recording</b>" not in html
 

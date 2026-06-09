@@ -32,7 +32,6 @@ def _select_options(current: str, options: list[str]) -> list[str]:
 def render_index(
     config: Dict[str, Any],
     status: Dict[str, Any],
-    verbose_logging: bool,
 ) -> str:
     """Render the main web UI page."""
     p = PALETTE
@@ -162,25 +161,6 @@ def render_index(
     .switch input:checked + .slider {{ background: {p["accent"]}; }}
     .switch input:checked + .slider:before {{ transform: translateX(20px); }}
 
-    /* Activity log */
-    .log-head {{ display: flex; align-items: center; justify-content: space-between; }}
-    .log-container {{
-      background: {p["bg"]}; border: 1px solid {p["border"]}; border-radius: 8px;
-      padding: 0.75rem; max-height: 420px; overflow-y: auto;
-      font-family: ui-monospace, "Cascadia Code", "Courier New", monospace; font-size: 0.85rem;
-    }}
-    .log-line, .log-success, .log-error, .log-warning, .log-info, .log-track, .log-waiting {{
-      padding: 0.4rem 0.6rem; margin-bottom: 0.4rem; border-left: 3px solid transparent;
-      border-radius: 4px; line-height: 1.5;
-    }}
-    .log-success {{ background: rgba(29,185,84,0.08); border-left-color: {p["success"]}; color: {p["success"]}; }}
-    .log-error {{ background: rgba(248,81,73,0.10); border-left-color: {p["error"]}; color: {p["error"]}; }}
-    .log-warning {{ background: rgba(210,153,34,0.10); border-left-color: {p["warning"]}; color: {p["warning"]}; }}
-    .log-info {{ background: rgba(29,185,84,0.04); border-left-color: {p["accent"]}; color: {p["text"]}; }}
-    .log-track {{ background: rgba(29,185,84,0.06); border-left-color: {p["accent"]}; color: {p["accent"]}; font-weight: 500; }}
-    .log-line {{ background: rgba(255,255,255,0.02); border-left-color: {p["border"]}; color: {p["text_muted"]}; }}
-    .log-waiting {{ color: {p["text_muted"]}; text-align: center; padding: 2rem; font-style: italic; }}
-
     /* Recorded tracks table */
     table.history {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
     table.history th, table.history td {{ text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid {p["border"]}; }}
@@ -252,19 +232,8 @@ def render_index(
               <span class="slider"></span>
             </label>
           </form>
+          <div id="timer-display" class="help-text" style="display:none; font-weight:600;"></div>
         </div>
-      </div>
-
-      <div class="panel">
-        <div class="log-head"><h2>Recording Activity</h2>
-          <form method="post" action="/toggle-verbose" style="margin:0;">
-            <label style="display:flex; align-items:center; gap:0.4rem; margin:0; font-size:0.8rem; color:{p["text_muted"]};">
-              <input type="checkbox" name="verbose" {checked(verbose_logging)} onchange="this.form.submit()"> verbose
-            </label>
-          </form>
-        </div>
-        <div class="log-container" id="log-display"><div class="log-waiting">Loading logs…</div></div>
-        <div id="timer-display" class="help-text" style="display:none; margin-top:0.75rem; font-weight:600;"></div>
       </div>
 
       <div class="panel">
@@ -400,13 +369,6 @@ def render_index(
       el.classList.add('active');
     }}
 
-    function refreshLogs() {{
-      fetch('/logs').then(r => r.json()).then(data => {{
-        const el = document.getElementById('log-display');
-        if (data.logs) {{ el.innerHTML = data.logs; el.scrollTop = 0; }}
-      }}).catch(e => console.error('logs', e));
-    }}
-
     function fmtTime(sec) {{
       sec = Math.max(0, Math.floor(sec));
       const m = Math.floor(sec / 60), s = sec % 60;
@@ -527,9 +489,8 @@ def render_index(
       }}).catch(e => console.error('history', e));
     }}
 
-    refreshLogs(); refreshStatus(); refreshHistory();
+    refreshStatus(); refreshHistory();
     setInterval(refreshHistory, 5000);
-    setInterval(refreshLogs, 3000);
     setInterval(refreshStatus, 2000);
     setInterval(paintProgress, 1000);
   </script>

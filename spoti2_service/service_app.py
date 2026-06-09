@@ -74,60 +74,6 @@ def merge_web_config(config: Dict[str, Any], form: Dict[str, list]) -> Dict[str,
     return merged
 
 
-_WAITING_HTML = '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
-
-
-def filter_recorder_logs(recent_logs: list, verbose: bool) -> str:
-    """Filter raw recorder.log lines into color-coded HTML for the activity panel.
-
-    Matches the actual log wording: the save line is ``Saved /path`` (no colon),
-    so the keyword must be ``"Saved "`` rather than ``"Saved:"``.
-    """
-    if verbose:
-        keywords = [
-            "Saved ", "ERROR:", "WARNING:", "Track changed:", "Starting MPRIS",
-            "already exists", "Skipping incomplete track", "Recording", "LastFM", "Fetched",
-        ]
-        limit = 50
-        strip_prefix = False
-    else:
-        keywords = ["Saved ", "ERROR:", "already exists", "Skipping incomplete track"]
-        limit = 30
-        strip_prefix = True
-
-    filtered = []
-    for line in recent_logs:
-        if not any(keyword in line for keyword in keywords):
-            continue
-        cleaned = escape(line.strip()).replace("INFO: INFO:", "INFO:").replace("INFO INFO:", "INFO:")
-        if strip_prefix:
-            for prefix in ("INFO:", "DEBUG:"):
-                if cleaned.startswith(prefix):
-                    cleaned = cleaned[len(prefix):].strip()
-
-        if "ERROR" in line:
-            formatted = f'<div class="log-error">❌ {cleaned}</div>'
-        elif "WARNING" in line and verbose:
-            formatted = f'<div class="log-warning">⚠️ {cleaned}</div>'
-        elif "already exists" in line:
-            formatted = f'<div class="log-warning">⏭️ {cleaned}</div>'
-        elif "Skipping incomplete track" in line:
-            formatted = f'<div class="log-warning">⏭️ {cleaned}</div>'
-        elif "Saved " in line:
-            formatted = f'<div class="log-success">✅ {cleaned}</div>'
-        elif "Fetched" in line or "LastFM" in line:
-            formatted = f'<div class="log-info">📊 {cleaned}</div>'
-        elif "Track changed:" in line:
-            formatted = f'<div class="log-track">🎵 {cleaned}</div>'
-        else:
-            formatted = f'<div class="log-line">{cleaned}</div>'
-        filtered.append(formatted)
-
-    if not filtered:
-        return _WAITING_HTML
-    return "\n".join(reversed(filtered[-limit:]))
-
-
 def configure_logging(verbose: bool = False) -> None:
     """Configure logging to file and stdout."""
     handlers = [
@@ -175,7 +121,6 @@ class RecorderSupervisor:
             "timer_start_time": 0,
             "timer_duration_seconds": 0,
         }
-        self._verbose_logging = False  # Toggle for minimal vs verbose logging
 
     # Public API -------------------------------------------------------------
     def start(self) -> None:
@@ -276,15 +221,6 @@ class RecorderSupervisor:
         with self._status_lock:
             supervisor_status = dict(self._status)
         return self._merge_recorder_status(supervisor_status)
-
-    def set_verbose_logging(self, enabled: bool) -> None:
-        """Toggle verbose logging mode."""
-        self._verbose_logging = enabled
-        logging.info("Verbose logging %s", "enabled" if enabled else "disabled")
-
-    def get_verbose_logging(self) -> bool:
-        """Get current verbose logging state."""
-        return self._verbose_logging
 
     # Internal helpers -------------------------------------------------------
     def _set_status(self, state: str, details: str, current_track: str = "") -> None:
@@ -603,8 +539,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._serve_index()
         elif self.path == "/status":
             self._send_json(self.server.app.supervisor.status())
-        elif self.path == "/logs":
-            self._serve_logs()
         elif self.path == "/history":
             self._serve_history()
         elif self.path == "/logo.png":
@@ -634,8 +568,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._handle_pause()
         elif self.path == "/resume":
             self._handle_resume()
-        elif self.path == "/toggle-verbose":
-            self._handle_toggle_verbose()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -652,25 +584,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body.encode("utf-8"))
-
-    def _serve_logs(self) -> None:
-        """Serve recent filtered log entries and update status based on activity."""
-        try:
-            log_path = LOG_DIR / "recorder.log"
-            if log_path.exists():
-                verbose = self.server.app.supervisor.get_verbose_logging()
-
-                with open(log_path, "r") as f:
-                    lines = f.readlines()
-                    recent_logs = lines[-200:] if len(lines) > 200 else lines
-
-                    logs = filter_recorder_logs(recent_logs, verbose)
-            else:
-                logs = "No logs available - recorder not started"
-
-            self._send_json({"logs": logs})
-        except Exception as e:
-            self._send_json({"logs": f"Error reading logs: {e}"})
 
     def _serve_logo(self) -> None:
         """Serve the logo.png file."""
@@ -744,20 +657,6 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Location", "/")
         self.end_headers()
 
-    def _handle_toggle_verbose(self) -> None:
-        """Toggle verbose logging mode."""
-        length = int(self.headers.get("Content-Length", "0"))
-        payload = self.rfile.read(length).decode("utf-8")
-        form = parse_qs(payload)
-
-        # Checkbox is present if checked, absent if unchecked
-        verbose = "verbose" in form
-        self.server.app.supervisor.set_verbose_logging(verbose)
-
-        self.send_response(HTTPStatus.SEE_OTHER)
-        self.send_header("Location", "/")
-        self.end_headers()
-
     def _send_json(self, payload: Dict[str, str]) -> None:
         body = json.dumps(payload)
         self.send_response(HTTPStatus.OK)
@@ -767,11 +666,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body.encode("utf-8"))
 
     def _render_index(self, config: Dict[str, str], status: Dict[str, str]) -> str:
-        return render_index(
-            config=config,
-            status=status,
-            verbose_logging=self.server.app.supervisor.get_verbose_logging(),
-        )
+        return render_index(config=config, status=status)
 
 
 
