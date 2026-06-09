@@ -31,6 +31,7 @@ from .recorder_status import (
     TimerStatus,
     TrackStatus,
 )
+from .track_history import TrackHistoryWriter
 from .util import get_spotify_stream_info, stream_info_for_source
 from .tagging_api import tag_output
 from .user_config import (
@@ -202,6 +203,12 @@ def record(
         "--status-file",
         help="Write structured recorder status to this JSON file using atomic replace.",
     ),
+    history_file: str = typer.Option(
+        None,
+        "--history-file",
+        help="Append per-track recording outcomes (saved/skipped/failed + year/genre) "
+        "to this capped JSONL file.",
+    ),
     control_stdin: bool = typer.Option(
         False,
         "--control-stdin",
@@ -250,6 +257,7 @@ def record(
     playlist_base_path = resolve_param("playlist_base_path", playlist_base_path)
     max_duration = resolve_param("max_duration", max_duration)
     status_file = resolve_param("status_file", status_file)
+    history_file = resolve_param("history_file", history_file)
     control_stdin = resolve_param("control_stdin", control_stdin)
     monitor = resolve_param("monitor", monitor)
 
@@ -419,6 +427,7 @@ def record(
     }
 
     status_writer = AtomicStatusWriter(status_file, fsync=False) if status_file else None
+    history_writer = TrackHistoryWriter(history_file) if history_file else None
     recorder_status = RecorderStatus(state="starting")
     # Session-constant capture facts for the UI's now-playing card.
     recorder_status.samplerate = info.samplerate
@@ -683,8 +692,9 @@ def record(
         enable_graceful_degradation=True,
         allow_overwrite=engine_config.allow_overwrite,
         lastfm_api_key=engine_config.lastfm_api_key,
+        on_track_result=history_writer.append if history_writer else None,
     )
-    
+
     # Flush any cached data from previous runs
     logging.info("Performing startup cleanup - flushing cache for clean start...")
     manager.flush_cache()

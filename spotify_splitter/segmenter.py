@@ -19,6 +19,13 @@ from .mpris import TrackInfo
 from .track_boundary_detector import TrackBoundaryDetector, BoundaryResult, TrackMarker as EnhancedTrackMarker
 from .error_recovery import ErrorRecoveryManager
 from .lastfm_api import get_lastfm_client
+from .track_history import (
+    TrackResult,
+    SAVED,
+    SKIPPED_INCOMPLETE,
+    SKIPPED_EXISTS,
+    FAILED,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -205,6 +212,7 @@ class SegmentManager:
         enable_graceful_degradation: bool = True,
         lastfm_api_key: Optional[str] = None,
         allow_overwrite: bool = False,
+        on_track_result: Optional[callable] = None,
     ) -> None:
         self.samplerate = samplerate
         self.output_dir = output_dir
@@ -212,6 +220,8 @@ class SegmentManager:
         self.audio_queue = audio_queue
         self.event_queue = event_queue
         self.ui_callback = ui_callback
+        # Optional callback(TrackResult) for the structured recording history.
+        self.on_track_result = on_track_result
 
         # Handle playlist path - if just a filename, place in output directory
         if playlist_path:
@@ -821,6 +831,10 @@ class SegmentManager:
                     is_valid, diagnostic = self.boundary_detector.validate_frame_integrity()
                     if not is_valid:
                         logger.debug("Frame integrity note while skipping: %s", diagnostic)
+                    self._emit_track_result(
+                        SKIPPED_INCOMPLETE, start_marker.track_info,
+                        reason=f"captured {actual_duration_ms}ms of expected {expected_duration_ms}ms",
+                    )
                     # Advance past the incomplete segment; this is a skip, not a failure.
                     self._advance_after_segment(end_marker, window, cleanup_ms)
                     raise IncompleteTrackSkip(start_marker.track_info.title)
@@ -933,6 +947,35 @@ class SegmentManager:
         """Download cover artwork through the manager's pooled session."""
         return self.artwork_session.get(uri, timeout=10).content
 
+    def _emit_track_result(
+        self,
+        outcome: str,
+        track_info: TrackInfo,
+        *,
+        year: Optional[int] = None,
+        genre: Optional[str] = None,
+        path: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> None:
+        """Record a structured outcome for the recording history (best-effort)."""
+        if not self.on_track_result:
+            return
+        try:
+            self.on_track_result(TrackResult(
+                outcome=outcome,
+                artist=getattr(track_info, "artist", "") or "",
+                title=getattr(track_info, "title", "") or "",
+                album=getattr(track_info, "album", "") or "",
+                track_number=getattr(track_info, "track_number", None),
+                year=year,
+                genre=genre,
+                path=path,
+                duration_ms=int(getattr(track_info, "duration_ms", 0) or 0),
+                reason=reason,
+            ))
+        except Exception as e:
+            logger.debug("Failed to record track result: %s", e)
+
     def _export(self, segment: Iterable | AudioSegment, track_info: TrackInfo) -> None:
         """Export ``segment`` to disk and tag it with metadata."""
         if self.bundle_playlist:
@@ -957,6 +1000,9 @@ class SegmentManager:
         path.parent.mkdir(parents=True, exist_ok=True)
 
         file_already_exists = path.exists()
+        did_save = not (file_already_exists and not self.allow_overwrite)
+        resolved_year = track_info.year
+        resolved_genre = track_info.genre
         if file_already_exists and not self.allow_overwrite:
             logger.info("File %s already exists, skipping export but adding to playlist", path)
         else:
@@ -1015,6 +1061,8 @@ class SegmentManager:
                         year = parsed_year
                         logger.info("Parsed year from track/album name: %s", year)
 
+            resolved_year = year
+            resolved_genre = genre
             tags["artist"] = track_info.artist
             tags["title"] = track_info.title
             if self.bundle_album_name:
@@ -1098,6 +1146,19 @@ class SegmentManager:
         if hasattr(self, 'ui_callback') and self.ui_callback:
             self.ui_callback("saved", track_info)
 
+        # Record the structured outcome for the recording history.
+        if did_save:
+            self._emit_track_result(
+                SAVED, track_info,
+                year=resolved_year, genre=resolved_genre, path=str(path),
+            )
+        else:
+            self._emit_track_result(
+                SKIPPED_EXISTS, track_info,
+                year=resolved_year, genre=resolved_genre, path=str(path),
+                reason="file already exists",
+            )
+
         if self.bundle_playlist:
             self.bundle_track_number += 1
 
@@ -1159,6 +1220,7 @@ class SegmentManager:
                         "track": track_info,
                         "error": str(e),
                     })
+                self._emit_track_result(FAILED, track_info, reason=str(e))
                 return False
 
         return False

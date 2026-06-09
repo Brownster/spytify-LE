@@ -15,6 +15,7 @@ from pydub import AudioSegment
 from spotify_splitter.segmenter import SegmentManager, TrackMarker
 from spotify_splitter.mpris import TrackInfo
 from spotify_splitter.track_boundary_detector import BoundaryResult, TrackBoundaryDetector
+from spotify_splitter.track_history import SAVED, SKIPPED_INCOMPLETE
 
 
 class TestEnhancedSegmentProcessing(unittest.TestCase):
@@ -358,6 +359,71 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         self.assertNotIn("processing_failure", actions)
         # The segment was advanced past, leaving a single marker.
         self.assertEqual(len(self.segment_manager.track_markers), 1)
+
+    def test_emit_track_result_invokes_callback(self):
+        """_emit_track_result builds a TrackResult from track info + fields."""
+        results = []
+        self.segment_manager.on_track_result = results.append
+        self.segment_manager._emit_track_result(
+            SAVED, self.track_info, year=1972, genre="rock", path="/m/x.mp3"
+        )
+        assert len(results) == 1
+        r = results[0]
+        assert r.outcome == "saved"
+        assert r.title == self.track_info.title
+        assert r.year == 1972 and r.genre == "rock"
+        assert r.path == "/m/x.mp3"
+
+    @patch('spotify_splitter.segmenter.SegmentManager._export')
+    def test_incomplete_skip_emits_history(self, mock_export):
+        """An incomplete track emits a skipped_incomplete history result."""
+        results = []
+        self.segment_manager.on_track_result = results.append
+        self.segment_manager.continuous_buffer = self.test_audio  # 5s captured
+        long_track = self.track_info._replace(duration_ms=180000)
+        self.segment_manager.track_markers = [
+            TrackMarker(0, long_track),
+            TrackMarker(5000, long_track),
+        ]
+        boundary_result = BoundaryResult(
+            start_frame=0, end_frame=5000, confidence=0.9,
+            continuity_valid=True, grace_period_applied=False, correction_applied=False,
+        )
+        with patch.object(self.segment_manager.boundary_detector, 'detect_boundary',
+                          return_value=boundary_result):
+            self.segment_manager.process_segments()
+
+        mock_export.assert_not_called()
+        assert [r.outcome for r in results] == [SKIPPED_INCOMPLETE]
+        assert "captured" in (results[0].reason or "")
+
+    def test_export_emits_saved_history(self):
+        """A real export emits a saved result carrying the tagged year/genre."""
+        import shutil
+        out_dir = Path(self.temp_dir.name) if hasattr(self, "temp_dir") else Path("/tmp/spytify-hist-test")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        results = []
+        manager = SegmentManager(
+            samplerate=44100,
+            output_dir=out_dir,
+            audio_queue=queue.Queue(),
+            event_queue=queue.Queue(),
+            lastfm_api_key=None,  # no network
+            on_track_result=results.append,
+        )
+        track = TrackInfo(
+            artist="Ada", title="Saved Song", album="Album", art_uri=None,
+            id="spotify:track:x", track_number=3, position=0, duration_ms=1000,
+            year=1972, genre="rock",
+        )
+        manager._export(AudioSegment.silent(duration=1000), track)
+
+        assert [r.outcome for r in results] == [SAVED]
+        r = results[0]
+        assert r.year == 1972 and r.genre == "rock"
+        assert r.title == "Saved Song" and r.track_number == 3
+        assert r.path and r.path.endswith("03 - Saved Song.mp3")
+        shutil.rmtree(out_dir, ignore_errors=True)
 
     def test_enhanced_track_marker_conversion(self):
         """Test conversion from TrackMarker to EnhancedTrackMarker."""
