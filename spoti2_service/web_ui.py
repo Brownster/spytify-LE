@@ -7,12 +7,13 @@ from spotify_splitter.user_config import DEFAULT_CONFIG
 
 
 PALETTE = {
-    "bg": "#0d1117",
+    "bg": "#0b0f14",
     "panel": "#161b22",
+    "panel_alt": "#11161d",
     "border": "#30363d",
     "accent": "#1DB954",
     "accent_hover": "#1ED760",
-    "text": "#c9d1d9",
+    "text": "#e6edf3",
     "text_muted": "#8b949e",
     "success": "#1DB954",
     "warning": "#d29922",
@@ -45,23 +46,15 @@ def render_index(
     def text(value: object) -> str:
         return escape(str(value or ""))
 
-    state = status.get("state", "unknown")
-    state_color = {
-        "running": p["success"],
-        "starting": p["warning"],
-        "stopped": p["text_muted"],
-        "paused": p["warning"],
-        "waiting": p["warning"],
-        "error": p["error"],
-    }.get(state, p["text"])
-
+    # Live state (badge, track, details) is populated client-side from /status;
+    # only config values are server-rendered, and those go through attr()/text().
     return f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Spoti2 - Linux Spotify Recorder</title>
+  <title>Spytify-LE - Linux Audio Recorder</title>
   <style>
     * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
@@ -69,397 +62,203 @@ def render_index(
       background: {p["bg"]};
       color: {p["text"]};
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      line-height: 1.6;
+      line-height: 1.5;
       min-height: 100vh;
-    }}
-
-    header {{
-      background: {p["panel"]};
-      border-bottom: 1px solid {p["border"]};
-      padding: 1.5rem 2rem;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    }}
-
-    header .logo {{
-      height: 60px;
-      margin-bottom: 0.5rem;
-    }}
-
-    header p {{
-      color: {p["text_muted"]};
-      font-size: 0.9rem;
-    }}
-
-    .container {{
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 2rem;
-    }}
-
-    /* Tab Navigation */
-    .tabs {{
       display: flex;
-      gap: 0.5rem;
-      margin-bottom: 2rem;
-      border-bottom: 2px solid {p["border"]};
     }}
 
-    .tab-button {{
-      background: none;
-      border: none;
-      color: {p["text_muted"]};
-      padding: 1rem 2rem;
-      cursor: pointer;
-      font-size: 1rem;
-      font-weight: 500;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -2px;
-      transition: all 0.2s;
+    /* Sidebar */
+    .sidebar {{
+      width: 220px;
+      min-height: 100vh;
+      background: {p["panel_alt"]};
+      border-right: 1px solid {p["border"]};
+      padding: 1.5rem 1rem;
+      display: flex;
+      flex-direction: column;
+      position: sticky;
+      top: 0;
     }}
-
-    .tab-button:hover {{
-      color: {p["text"]};
-      background: rgba(255,255,255,0.05);
+    .brand {{ color: {p["accent"]}; font-size: 1.25rem; font-weight: 700; }}
+    .brand-sub {{ color: {p["text_muted"]}; font-size: 0.8rem; margin-bottom: 2rem; }}
+    .nav-item {{
+      display: flex; align-items: center; gap: 0.6rem;
+      padding: 0.6rem 0.75rem; margin-bottom: 0.25rem;
+      color: {p["text_muted"]}; border-radius: 6px; cursor: pointer;
+      border-left: 3px solid transparent; font-weight: 500; user-select: none;
     }}
-
-    .tab-button.active {{
-      color: {p["accent"]};
-      border-bottom-color: {p["accent"]};
+    .nav-item:hover {{ color: {p["text"]}; background: rgba(255,255,255,0.04); }}
+    .nav-item.active {{
+      color: {p["accent"]}; background: rgba(29,185,84,0.10);
+      border-left-color: {p["accent"]};
     }}
-
-    .tab-content {{
-      display: none;
+    .sidebar-footer {{
+      margin-top: auto; display: flex; align-items: center; gap: 0.5rem;
+      color: {p["text_muted"]}; font-size: 0.85rem;
     }}
+    .dot {{ width: 9px; height: 9px; border-radius: 50%; background: {p["success"]}; }}
 
-    .tab-content.active {{
-      display: block;
-    }}
+    /* Main */
+    .main {{ flex: 1; padding: 1.5rem 2rem; max-width: 1100px; }}
+    .view {{ display: none; }}
+    .view.active {{ display: block; }}
 
-    /* Panels */
     .panel {{
       background: {p["panel"]};
       border: 1px solid {p["border"]};
-      border-radius: 8px;
+      border-radius: 10px;
       padding: 1.5rem;
-      margin-bottom: 1.5rem;
+      margin-bottom: 1.25rem;
     }}
+    .panel h2 {{ font-size: 1.15rem; font-weight: 600; margin-bottom: 1rem; }}
 
-    .panel h2 {{
-      font-size: 1.25rem;
-      font-weight: 600;
-      margin-bottom: 1rem;
-      color: {p["text"]};
-    }}
+    /* Record top row */
+    .record-top {{ display: flex; gap: 1.25rem; align-items: stretch; flex-wrap: wrap; }}
+    .np-card {{ flex: 1 1 420px; display: flex; gap: 1.25rem; }}
+    .controls-card {{ flex: 0 0 250px; display: flex; flex-direction: column; gap: 0.75rem; }}
 
-    /* Status Display */
-    .status-display {{
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      padding: 1rem;
-      background: rgba(29, 185, 84, 0.1);
-      border-radius: 6px;
-      margin-bottom: 1rem;
+    .np-art {{
+      width: 120px; height: 120px; border-radius: 8px; object-fit: cover;
+      background: radial-gradient(circle at 50% 50%, #2a2f37 0%, #14181e 70%);
+      border: 1px solid {p["border"]}; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: {p["text_muted"]}; font-size: 2rem;
     }}
+    .np-info {{ flex: 1; min-width: 0; display: flex; flex-direction: column; }}
+    .np-head {{ display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }}
+    .badge {{ display: inline-flex; align-items: center; gap: 0.45rem; font-size: 0.8rem; font-weight: 600; letter-spacing: 0.03em; }}
+    .badge .dot {{ animation: pulse 2s infinite; }}
+    .np-format {{ color: {p["text_muted"]}; font-size: 0.85rem; font-variant-numeric: tabular-nums; }}
+    .np-title {{ font-size: 1.5rem; font-weight: 700; margin-top: 0.5rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+    .np-artist {{ color: {p["text_muted"]}; }}
+    .np-progress {{ margin-top: auto; padding-top: 1rem; }}
+    .np-times {{ display: flex; justify-content: space-between; font-size: 0.75rem; color: {p["text_muted"]}; font-variant-numeric: tabular-nums; margin-bottom: 0.35rem; }}
+    .bar {{ height: 4px; background: {p["border"]}; border-radius: 2px; overflow: hidden; }}
+    .bar-fill {{ height: 100%; width: 0%; background: {p["accent"]}; transition: width 0.5s linear; }}
 
-    .status-indicator {{
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: {state_color};
-      animation: pulse 2s infinite;
-    }}
-
-    @keyframes pulse {{
-      0%, 100% {{ opacity: 1; }}
-      50% {{ opacity: 0.5; }}
-    }}
-
-    .status-text {{
-      flex: 1;
-    }}
-
-    .status-text strong {{
-      color: {p["accent"]};
-      text-transform: capitalize;
-    }}
-
-    .status-details {{
-      color: {p["text_muted"]};
-      font-size: 0.9rem;
-    }}
-
-    /* Recording Log */
-    .log-container {{
-      background: {p["bg"]};
-      border: 1px solid {p["border"]};
-      border-radius: 6px;
-      padding: 1rem;
-      max-height: 400px;
-      overflow-y: auto;
-      font-family: 'Courier New', monospace;
-      font-size: 0.85rem;
-    }}
-
-    .log-container::-webkit-scrollbar {{
-      width: 8px;
-    }}
-
-    .log-container::-webkit-scrollbar-track {{
-      background: {p["panel"]};
-    }}
-
-    .log-container::-webkit-scrollbar-thumb {{
-      background: {p["border"]};
-      border-radius: 4px;
-    }}
-
-    /* Log Entry Styles */
-    .log-line, .log-success, .log-error, .log-warning, .log-info, .log-track, .log-waiting {{
-      padding: 0.5rem 0.75rem;
-      margin-bottom: 0.5rem;
-      border-left: 3px solid transparent;
-      border-radius: 4px;
-      line-height: 1.5;
-    }}
-
-    .log-success {{
-      background: rgba(29, 185, 84, 0.1);
-      border-left-color: {p["success"]};
-      color: {p["success"]};
-    }}
-
-    .log-error {{
-      background: rgba(248, 81, 73, 0.1);
-      border-left-color: {p["error"]};
-      color: {p["error"]};
-    }}
-
-    .log-warning {{
-      background: rgba(210, 153, 34, 0.1);
-      border-left-color: {p["warning"]};
-      color: {p["warning"]};
-    }}
-
-    .log-info {{
-      background: rgba(29, 185, 84, 0.05);
-      border-left-color: {p["accent"]};
-      color: {p["text"]};
-    }}
-
-    .log-track {{
-      background: rgba(29, 185, 84, 0.08);
-      border-left-color: {p["accent"]};
-      color: {p["accent"]};
-      font-weight: 500;
-    }}
-
-    .log-line {{
-      background: rgba(255, 255, 255, 0.02);
-      border-left-color: {p["border"]};
-      color: {p["text_muted"]};
-    }}
-
-    .log-waiting {{
-      color: {p["text_muted"]};
-      text-align: center;
-      padding: 2rem;
-      font-style: italic;
-    }}
-
-    /* Forms */
-    .form-grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 1.5rem;
-      margin-bottom: 1.5rem;
-    }}
-
-    label {{
-      display: block;
-      margin-bottom: 1rem;
-    }}
-
-    label span {{
-      display: block;
-      margin-bottom: 0.5rem;
-      color: {p["text"]};
-      font-weight: 500;
-    }}
-
-    input[type="text"], select {{
-      width: 100%;
-      padding: 0.75rem;
-      background: {p["bg"]};
-      border: 1px solid {p["border"]};
-      border-radius: 6px;
-      color: {p["text"]};
-      font-size: 0.95rem;
-      transition: border-color 0.2s;
-    }}
-
-    input[type="text"]:focus, select:focus {{
-      outline: none;
-      border-color: {p["accent"]};
-    }}
-
-    .checkbox-group {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 1.5rem;
-      margin: 1rem 0;
-    }}
-
-    .checkbox-group label {{
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      margin: 0;
-    }}
-
-    input[type="checkbox"] {{
-      width: 18px;
-      height: 18px;
-      cursor: pointer;
-      accent-color: {p["accent"]};
-    }}
+    @keyframes pulse {{ 0%,100% {{ opacity: 1; }} 50% {{ opacity: 0.45; }} }}
 
     /* Buttons */
-    .button-group {{
-      display: flex;
-      gap: 1rem;
-      margin-top: 1.5rem;
-    }}
-
     button {{
-      flex: 1;
-      padding: 0.875rem 1.5rem;
+      width: 100%; padding: 0.8rem 1.25rem;
       background: linear-gradient(135deg, {p["accent"]}, {p["accent_hover"]});
-      border: none;
-      border-radius: 6px;
-      color: #fff;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: transform 0.2s, box-shadow 0.2s;
+      border: none; border-radius: 8px; color: #06210f;
+      font-size: 0.95rem; font-weight: 700; cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s;
     }}
-
-    button:hover {{
-      transform: translateY(-2px);
-      box-shadow: 0 4px 12px rgba(29, 185, 84, 0.3);
-    }}
-
-    button:active {{
-      transform: translateY(0);
-    }}
-
+    button:hover {{ transform: translateY(-1px); box-shadow: 0 4px 12px rgba(29,185,84,0.25); }}
     button.secondary {{
-      background: {p["panel"]};
-      border: 1px solid {p["border"]};
-      color: {p["text"]};
+      background: {p["panel_alt"]}; border: 1px solid {p["border"]}; color: {p["text"]};
     }}
+    button.secondary:hover {{ background: {p["border"]}; box-shadow: none; }}
+    .btn-row {{ display: flex; gap: 0.75rem; }}
 
-    button.secondary:hover {{
-      background: {p["border"]};
-      box-shadow: none;
-    }}
+    /* Toggle */
+    .toggle-row {{ display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; padding-top: 0.5rem; border-top: 1px solid {p["border"]}; }}
+    .switch {{ position: relative; display: inline-block; width: 42px; height: 22px; }}
+    .switch input {{ opacity: 0; width: 0; height: 0; }}
+    .slider {{ position: absolute; cursor: pointer; inset: 0; background: {p["border"]}; border-radius: 22px; transition: 0.2s; }}
+    .slider:before {{ content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }}
+    .switch input:checked + .slider {{ background: {p["accent"]}; }}
+    .switch input:checked + .slider:before {{ transform: translateX(20px); }}
 
-    .help-text {{
-      color: {p["text_muted"]};
-      font-size: 0.875rem;
-      margin-top: 0.5rem;
+    /* Activity log */
+    .log-head {{ display: flex; align-items: center; justify-content: space-between; }}
+    .log-container {{
+      background: {p["bg"]}; border: 1px solid {p["border"]}; border-radius: 8px;
+      padding: 0.75rem; max-height: 420px; overflow-y: auto;
+      font-family: ui-monospace, "Cascadia Code", "Courier New", monospace; font-size: 0.85rem;
     }}
+    .log-line, .log-success, .log-error, .log-warning, .log-info, .log-track, .log-waiting {{
+      padding: 0.4rem 0.6rem; margin-bottom: 0.4rem; border-left: 3px solid transparent;
+      border-radius: 4px; line-height: 1.5;
+    }}
+    .log-success {{ background: rgba(29,185,84,0.08); border-left-color: {p["success"]}; color: {p["success"]}; }}
+    .log-error {{ background: rgba(248,81,73,0.10); border-left-color: {p["error"]}; color: {p["error"]}; }}
+    .log-warning {{ background: rgba(210,153,34,0.10); border-left-color: {p["warning"]}; color: {p["warning"]}; }}
+    .log-info {{ background: rgba(29,185,84,0.04); border-left-color: {p["accent"]}; color: {p["text"]}; }}
+    .log-track {{ background: rgba(29,185,84,0.06); border-left-color: {p["accent"]}; color: {p["accent"]}; font-weight: 500; }}
+    .log-line {{ background: rgba(255,255,255,0.02); border-left-color: {p["border"]}; color: {p["text_muted"]}; }}
+    .log-waiting {{ color: {p["text_muted"]}; text-align: center; padding: 2rem; font-style: italic; }}
 
-    footer {{
-      text-align: center;
-      padding: 2rem;
-      color: {p["text_muted"]};
-      font-size: 0.875rem;
+    /* Forms (Settings / Advanced) */
+    .form-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }}
+    label {{ display: block; margin-bottom: 1rem; }}
+    label span {{ display: block; margin-bottom: 0.4rem; font-weight: 500; }}
+    input[type="text"], select {{
+      width: 100%; padding: 0.7rem; background: {p["bg"]}; border: 1px solid {p["border"]};
+      border-radius: 6px; color: {p["text"]}; font-size: 0.95rem;
     }}
-
-    footer a {{
-      color: {p["accent"]};
-      text-decoration: none;
-    }}
-
-    footer a:hover {{
-      text-decoration: underline;
-    }}
+    input[type="text"]:focus, select:focus {{ outline: none; border-color: {p["accent"]}; }}
+    .checkbox-group {{ display: flex; flex-wrap: wrap; gap: 1.25rem; margin: 1rem 0; }}
+    .checkbox-group label {{ display: flex; align-items: center; gap: 0.5rem; margin: 0; }}
+    input[type="checkbox"] {{ width: 17px; height: 17px; cursor: pointer; accent-color: {p["accent"]}; }}
+    .help-text {{ color: {p["text_muted"]}; font-size: 0.85rem; margin-top: 0.4rem; }}
+    .save-btn {{ width: auto; padding: 0.6rem 1.5rem; margin-top: 0.5rem; }}
   </style>
 </head>
 <body>
-  <header>
-    <img src="/logo.png" alt="Spytify-LE" class="logo" />
-    <p>Linux Spotify Desktop Recorder with LastFM Metadata</p>
-  </header>
+  <nav class="sidebar">
+    <div class="brand">Spytify-LE</div>
+    <div class="brand-sub">Linux Audio Recorder</div>
+    <div class="nav-item active" data-view="record" onclick="switchView('record', this)">🎙️ Record</div>
+    <div class="nav-item" data-view="settings" onclick="switchView('settings', this)">⚙️ Settings</div>
+    <div class="nav-item" data-view="advanced" onclick="switchView('advanced', this)">🛠️ Advanced</div>
+    <div class="sidebar-footer"><span class="dot"></span><span id="system-state">System Ready</span></div>
+  </nav>
 
-  <div class="container">
-    <!-- Tab Navigation -->
-    <div class="tabs">
-      <button class="tab-button active" onclick="switchTab('record')">Record</button>
-      <button class="tab-button" onclick="switchTab('settings')">Settings</button>
-      <button class="tab-button" onclick="switchTab('advanced')">Advanced</button>
-    </div>
-
-    <!-- Tab 1: Record -->
-    <div id="tab-record" class="tab-content active">
-      <div class="panel">
-        <h2>Recording Status</h2>
-        <div class="status-display">
-          <div id="status-indicator" class="status-indicator"></div>
-          <div class="status-text">
-            <div><strong id="status-state">{state}</strong></div>
-            <div id="status-details" class="status-details">{text(status.get("details", ""))}</div>
-            <div id="timer-display" class="status-details" style="display: none; margin-top: 0.5rem; font-weight: 600;"></div>
+  <main class="main">
+    <!-- Record -->
+    <section id="view-record" class="view active">
+      <div class="record-top">
+        <div class="panel np-card">
+          <div id="np-art" class="np-art">◉</div>
+          <div class="np-info">
+            <div class="np-head">
+              <span class="badge"><span id="np-dot" class="dot"></span><span id="np-badge">STOPPED</span></span>
+              <span id="np-format" class="np-format"></span>
+            </div>
+            <div id="np-title" class="np-title">Waiting for playback…</div>
+            <div id="np-artist" class="np-artist"></div>
+            <div class="np-progress">
+              <div class="np-times"><span id="np-elapsed">00:00</span><span id="np-duration">00:00</span></div>
+              <div class="bar"><div id="np-bar" class="bar-fill"></div></div>
+            </div>
           </div>
         </div>
 
-        <form method="post" action="/update" style="margin-bottom: 1rem;">
-          <label style="display: block; margin-bottom: 0.5rem;">
-            <span style="color: {p["text"]}; font-weight: 500;">⏱️ Recording Timer (Optional)</span>
-            <input type="text" name="max_duration" value="{attr(config.get("max_duration", ""))}"
-                   placeholder="e.g., 4h29m, 90m, 2h30m"
-                   style="width: 100%; padding: 0.75rem; margin-top: 0.5rem; background: {p["bg"]}; border: 1px solid {p["border"]}; border-radius: 6px; color: {p["text"]}; font-size: 0.95rem;" />
-            <div class="help-text">Automatically stop recording after specified duration. Leave empty for continuous recording.</div>
-          </label>
-          <button type="submit" class="secondary" style="width: auto; padding: 0.5rem 1rem; font-size: 0.9rem;">Save Timer</button>
-        </form>
-
-        <div class="button-group">
-          <form method="post" action="/start" style="flex: 1;">
-            <button type="submit">▶ Start</button>
-          </form>
-          <form method="post" action="/pause" style="flex: 1;">
-            <button type="submit" class="secondary">⏸ Pause</button>
-          </form>
-          <form method="post" action="/resume" style="flex: 1;">
-            <button type="submit" class="secondary">▶▶ Resume</button>
-          </form>
-          <form method="post" action="/stop" style="flex: 1;">
-            <button type="submit" class="secondary">⏹ Stop</button>
-          </form>
-        </div>
-      </div>
-
-      <div class="panel">
-        <h2>Recording Log</h2>
-        <div class="log-container" id="log-display">
-          <div style="color: {p["text_muted"]};">Loading logs...</div>
-        </div>
-
-        <form method="post" action="/toggle-verbose" style="margin-top: 1rem;">
-          <div class="checkbox-group">
-            <label>
-              <input type="checkbox" name="verbose" {checked(verbose_logging)} onchange="this.form.submit()">
-              <span style="color: {p["text_muted"]};">Show verbose logs (includes track changes, MPRIS events, warnings)</span>
+        <div class="panel controls-card">
+          <form method="post" action="/start"><button type="submit">▶ Start Recording</button></form>
+          <div class="btn-row">
+            <form method="post" action="/pause" style="flex:1;"><button type="submit" class="secondary">❚❚ Pause</button></form>
+            <form method="post" action="/stop" style="flex:1;"><button type="submit" class="secondary">■ Stop</button></form>
+          </div>
+          <form method="post" action="/update" class="toggle-row">
+            <span>Overwrite existing</span>
+            <label class="switch">
+              <input type="hidden" name="allow_overwrite" value="0">
+              <input type="checkbox" name="allow_overwrite" value="on" {checked(config.get("allow_overwrite", False))} onchange="this.form.submit()">
+              <span class="slider"></span>
             </label>
-          </div>
-        </form>
+          </form>
+        </div>
       </div>
-    </div>
 
-    <!-- Tab 2: Settings -->
-    <div id="tab-settings" class="tab-content">
+      <div class="panel">
+        <div class="log-head"><h2>Recording Activity</h2>
+          <form method="post" action="/toggle-verbose" style="margin:0;">
+            <label style="display:flex; align-items:center; gap:0.4rem; margin:0; font-size:0.8rem; color:{p["text_muted"]};">
+              <input type="checkbox" name="verbose" {checked(verbose_logging)} onchange="this.form.submit()"> verbose
+            </label>
+          </form>
+        </div>
+        <div class="log-container" id="log-display"><div class="log-waiting">Loading logs…</div></div>
+        <div id="timer-display" class="help-text" style="display:none; margin-top:0.75rem; font-weight:600;"></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" class="view">
       <form class="panel" method="post" action="/update">
         <h2>Output Settings</h2>
         <div class="form-grid">
@@ -468,7 +267,6 @@ def render_index(
             <input type="text" name="output" value="{attr(config.get("output", DEFAULT_CONFIG["output"]))}" />
             <div class="help-text">Where recorded tracks will be saved</div>
           </label>
-
           <label>
             <span>Audio Format</span>
             <select name="format">
@@ -478,33 +276,42 @@ def render_index(
           </label>
         </div>
 
-        <div class="checkbox-group" style="margin-top: 1rem;">
+        <div class="checkbox-group">
           <label>
             <input type="hidden" name="allow_overwrite" value="0">
             <input type="checkbox" name="allow_overwrite" value="on" {checked(config.get("allow_overwrite", False))}>
             <span>Allow Overwriting Existing Files</span>
           </label>
         </div>
-        <div class="help-text" style="margin-top: 0.5rem;">When enabled, tracks will be re-recorded even if they already exist (useful if previous recordings were incomplete)</div>
+        <div class="help-text">Re-record tracks even if they already exist (useful for fixing incomplete recordings)</div>
 
-        <h2 style="margin-top: 2rem;">Metadata Settings</h2>
+        <h2 style="margin-top:2rem;">Metadata</h2>
         <div class="form-grid">
           <label>
             <span>LastFM API Key</span>
             <input type="text" name="lastfm_api_key" value="{attr(config.get("lastfm_api_key", "") or "")}" placeholder="Enter your LastFM API key" />
-            <div class="help-text">Required for fetching year and genre tags. <a href="https://www.last.fm/api/account/create" target="_blank" style="color: {p["accent"]};">Get one here</a></div>
+            <div class="help-text">Required for year and genre tags. <a href="https://www.last.fm/api/account/create" target="_blank" style="color:{p["accent"]};">Get one here</a></div>
           </label>
         </div>
 
-        <h2 style="margin-top: 2rem;">Playlist Settings</h2>
+        <h2 style="margin-top:2rem;">Playlist</h2>
         <div class="form-grid">
           <label>
             <span>Playlist File (optional)</span>
             <input type="text" name="playlist" value="{attr(config.get("playlist", "") or "")}" placeholder="/path/to/playlist.m3u" />
             <div class="help-text">Generate an M3U playlist file</div>
           </label>
+          <label>
+            <span>Bundle Album Artwork URL (optional)</span>
+            <input type="text" name="bundle_album_art_uri" value="{attr(config.get("bundle_album_art_uri", "") or "")}" placeholder="https://example.com/album-cover.jpg" />
+            <div class="help-text">Custom artwork for bundle playlists</div>
+          </label>
+          <label>
+            <span>M3U Playlist Base Path (optional)</span>
+            <input type="text" name="playlist_base_path" value="{attr(config.get("playlist_base_path", "") or "")}" placeholder="/mnt/storage/music" />
+            <div class="help-text">Maps local recording paths to remote server paths in the playlist</div>
+          </label>
         </div>
-
         <div class="checkbox-group">
           <label>
             <input type="hidden" name="bundle_playlist" value="0">
@@ -513,33 +320,14 @@ def render_index(
           </label>
         </div>
 
-        <div class="form-group">
-          <label>
-            <span>Bundle Album Artwork URL (optional)</span>
-            <input type="text" name="bundle_album_art_uri" value="{attr(config.get("bundle_album_art_uri", "") or "")}" placeholder="https://example.com/album-cover.jpg" />
-            <div class="help-text">Custom album artwork for bundle playlists (uses first track's artwork if not provided)</div>
-          </label>
-        </div>
-
-        <div class="form-group">
-          <label>
-            <span>M3U Playlist Base Path (optional)</span>
-            <input type="text" name="playlist_base_path" value="{attr(config.get("playlist_base_path", "") or "")}" placeholder="/mnt/storage/music" />
-            <div class="help-text">Base path for M3U entries. Maps local recording paths to remote server paths (e.g., recording to ~/Music but listing as /mnt/nas/music in playlist)</div>
-          </label>
-        </div>
-
-        <div class="button-group">
-          <button type="submit">Save Settings</button>
-        </div>
+        <button type="submit" class="save-btn">Save Settings</button>
       </form>
-    </div>
+    </section>
 
-    <!-- Tab 3: Advanced -->
-    <div id="tab-advanced" class="tab-content">
+    <!-- Advanced -->
+    <section id="view-advanced" class="view">
       <form class="panel" method="post" action="/update">
-        <h2>Performance Settings</h2>
-
+        <h2>Performance</h2>
         <label>
           <span>Configuration Profile</span>
           <select name="profile">
@@ -547,8 +335,7 @@ def render_index(
           </select>
           <div class="help-text">Optimize for your system</div>
         </label>
-
-        <div class="checkbox-group" style="margin-top: 1.5rem;">
+        <div class="checkbox-group" style="margin-top:1rem;">
           <label>
             <input type="hidden" name="enable_adaptive" value="0">
             <input type="checkbox" name="enable_adaptive" value="on" {checked(config.get("enable_adaptive", True))}>
@@ -557,12 +344,12 @@ def render_index(
           <label>
             <input type="hidden" name="enable_monitoring" value="0">
             <input type="checkbox" name="enable_monitoring" value="on" {checked(config.get("enable_monitoring", False))}>
-            <span>Buffer Monitoring</span>
+            <span>Buffer Monitoring (debug)</span>
           </label>
           <label>
             <input type="hidden" name="enable_metrics" value="0">
             <input type="checkbox" name="enable_metrics" value="on" {checked(config.get("enable_metrics", False))}>
-            <span>Performance Metrics</span>
+            <span>Performance Metrics (debug)</span>
           </label>
           <label>
             <input type="hidden" name="debug_mode" value="0">
@@ -571,122 +358,118 @@ def render_index(
           </label>
         </div>
 
-        <h2 style="margin-top: 2rem;">Player Settings</h2>
-
+        <h2 style="margin-top:2rem;">Player</h2>
         <label>
           <span>MPRIS Player Name</span>
           <input type="text" name="player" value="{attr(config.get("player", DEFAULT_CONFIG["player"]))}" />
-          <div class="help-text">Usually "spotify" for Spotify desktop client</div>
+          <div class="help-text">Usually "spotify" for the Spotify desktop client</div>
         </label>
-
-        <div class="button-group">
-          <button type="submit">Save Advanced Settings</button>
-        </div>
+        <button type="submit" class="save-btn">Save Advanced Settings</button>
       </form>
-    </div>
-  </div>
-
-  <footer>
-    <p>Spoti2 &mdash; Linux Spotify Recorder | <a href="https://github.com/Brownster/spytify-LE#readme" target="_blank">Documentation</a></p>
-  </footer>
+    </section>
+  </main>
 
   <script>
-    function switchTab(tabName) {{
-      // Hide all tabs
-      document.querySelectorAll('.tab-content').forEach(tab => {{
-        tab.classList.remove('active');
-      }});
-      document.querySelectorAll('.tab-button').forEach(btn => {{
-        btn.classList.remove('active');
-      }});
+    const COLORS = {{
+      running: '{p["success"]}', starting: '{p["warning"]}', stopped: '{p["text_muted"]}',
+      paused: '{p["warning"]}', waiting: '{p["warning"]}', error: '{p["error"]}'
+    }};
+    const BADGE = {{
+      running: 'RECORDING ACTIVE', starting: 'STARTING', stopped: 'STOPPED',
+      paused: 'PAUSED', waiting: 'WAITING', error: 'ERROR'
+    }};
 
-      // Show selected tab
-      document.getElementById('tab-' + tabName).classList.add('active');
-      event.target.classList.add('active');
+    function switchView(name, el) {{
+      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+      document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+      document.getElementById('view-' + name).classList.add('active');
+      el.classList.add('active');
     }}
 
-    // Auto-refresh logs every 3 seconds
     function refreshLogs() {{
-      fetch('/logs')
-        .then(response => response.json())
-        .then(data => {{
-          const logDisplay = document.getElementById('log-display');
-          if (data.logs) {{
-            logDisplay.innerHTML = data.logs;
-            // Keep scroll at top since newest entries are at top
-            logDisplay.scrollTop = 0;
-          }}
-        }})
-        .catch(err => console.error('Failed to fetch logs:', err));
+      fetch('/logs').then(r => r.json()).then(data => {{
+        const el = document.getElementById('log-display');
+        if (data.logs) {{ el.innerHTML = data.logs; el.scrollTop = 0; }}
+      }}).catch(e => console.error('logs', e));
     }}
 
-    // Format seconds as "1h 2m 3s"
-    function formatTime(seconds) {{
-      if (seconds <= 0) return "0s";
-      const hours = Math.floor(seconds / 3600);
-      const minutes = Math.floor((seconds % 3600) / 60);
-      const secs = seconds % 60;
-      const parts = [];
-      if (hours > 0) parts.push(hours + "h");
-      if (minutes > 0) parts.push(minutes + "m");
-      if (secs > 0 || parts.length === 0) parts.push(secs + "s");
-      return parts.join(" ");
+    function fmtTime(sec) {{
+      sec = Math.max(0, Math.floor(sec));
+      const m = Math.floor(sec / 60), s = sec % 60;
+      return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
     }}
 
-    // Refresh status every 2 seconds
+    // Client-side progress interpolation (position is only sampled at track change).
+    let npKey = null, npStart = 0, npDuration = 0;
+
+    function paintProgress() {{
+      if (npDuration <= 0) {{
+        document.getElementById('np-bar').style.width = '0%';
+        document.getElementById('np-elapsed').textContent = '00:00';
+        document.getElementById('np-duration').textContent = '00:00';
+        return;
+      }}
+      let elapsed = Math.min(Math.max(Date.now()/1000 - npStart, 0), npDuration);
+      document.getElementById('np-bar').style.width = (elapsed / npDuration * 100) + '%';
+      document.getElementById('np-elapsed').textContent = fmtTime(elapsed);
+      document.getElementById('np-duration').textContent = fmtTime(npDuration);
+    }}
+
     function refreshStatus() {{
-      fetch('/status')
-        .then(response => response.json())
-        .then(data => {{
-          const timerDisplay = document.getElementById('timer-display');
-          const stateText = document.getElementById('status-state');
-          const detailsText = document.getElementById('status-details');
-          const indicator = document.getElementById('status-indicator');
+      fetch('/status').then(r => r.json()).then(data => {{
+        const st = data.state || 'unknown';
+        document.getElementById('np-badge').textContent = BADGE[st] || st.toUpperCase();
+        document.getElementById('np-dot').style.background = COLORS[st] || '{p["text"]}';
+        document.getElementById('system-state').textContent =
+          (st === 'running') ? 'Recording' : (data.details || 'System Ready');
 
-          if (stateText && data.state) {{
-            stateText.textContent = data.state;
-          }}
-          if (detailsText) {{
-            detailsText.textContent = data.details || '';
-          }}
-          if (indicator && data.state) {{
-            const colors = {{
-              running: '{p["success"]}',
-              starting: '{p["warning"]}',
-              stopped: '{p["text_muted"]}',
-              paused: '{p["warning"]}',
-              waiting: '{p["warning"]}',
-              error: '{p["error"]}'
-            }};
-            indicator.style.background = colors[data.state] || '{p["text"]}';
-          }}
+        const track = data.track || {{}};
+        const title = track.title || (st === 'running' ? 'Recording…' : 'Waiting for playback…');
+        document.getElementById('np-title').textContent = title;
+        document.getElementById('np-artist').textContent = track.artist || '';
 
-          // Update timer display if timer is enabled
-          if (data.timer_enabled) {{
-            const now = Date.now() / 1000;
-            const elapsed = Math.floor(now - data.timer_start_time);
-            const remaining = Math.max(0, data.timer_duration_seconds - elapsed);
-            const progress = (elapsed / data.timer_duration_seconds * 100).toFixed(1);
+        const art = document.getElementById('np-art');
+        if (track.art_uri) {{
+          art.style.backgroundImage = 'url("' + track.art_uri + '")';
+          art.style.backgroundSize = 'cover';
+          art.textContent = '';
+        }} else {{
+          art.style.backgroundImage = '';
+          art.textContent = '◉';
+        }}
 
-            // Color based on remaining time
-            let color = '#1DB954'; // green
-            if (remaining <= 300) color = '#E74C3C'; // red if < 5min
-            else if (remaining <= 600) color = '#F39C12'; // yellow if < 10min
+        const fmt = (data.output_format || '').toUpperCase();
+        const rate = data.samplerate ? (data.samplerate / 1000).toFixed(1) + ' kHz' : '';
+        document.getElementById('np-format').textContent = [fmt, rate].filter(Boolean).join('  |  ');
 
-            timerDisplay.innerHTML = `⏱️ Timer: <span style="color: ${{color}};">${{formatTime(remaining)}}</span> | Progress: ${{progress}}% (${{formatTime(elapsed)}} / ${{formatTime(data.timer_duration_seconds)}})`;
-            timerDisplay.style.display = 'block';
-          }} else {{
-            timerDisplay.style.display = 'none';
-          }}
-        }})
-        .catch(err => console.error('Failed to fetch status:', err));
+        // Reset interpolation when the track changes; position is microseconds.
+        const key = (track.artist || '') + ' - ' + (track.title || '');
+        npDuration = (track.duration_ms || 0) / 1000;
+        if (key !== npKey) {{
+          npKey = key;
+          npStart = Date.now()/1000 - (track.position || 0) / 1e6;
+        }}
+        paintProgress();
+
+        // Timer (max-duration) readout
+        const timer = document.getElementById('timer-display');
+        if (data.timer_enabled) {{
+          const remaining = Math.max(0, data.timer_remaining_seconds || 0);
+          let color = '{p["success"]}';
+          if (remaining <= 300) color = '{p["error"]}'; else if (remaining <= 600) color = '{p["warning"]}';
+          timer.innerHTML = '⏱️ Timer: <span style="color:' + color + ';">' + fmtTime(remaining) + '</span> remaining';
+          timer.style.display = 'block';
+        }} else {{
+          timer.style.display = 'none';
+        }}
+      }}).catch(e => console.error('status', e));
     }}
 
-    // Initial load and set intervals
-    refreshLogs();
+    refreshLogs(); refreshStatus();
     setInterval(refreshLogs, 3000);
     setInterval(refreshStatus, 2000);
+    setInterval(paintProgress, 1000);
   </script>
 </body>
 </html>
-        """.strip()
+""".strip()

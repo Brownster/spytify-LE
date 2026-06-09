@@ -127,21 +127,22 @@ def test_build_command_passes_status_file(tmp_path):
     assert command[-4:] == ["record", "--status-file", str(status_path), "--control-stdin"]
 
 
-def test_render_index_escapes_config_and_status_values():
+def test_render_index_escapes_config_values():
+    """Server-rendered config values must be escaped into input attributes."""
     config = DEFAULT_CONFIG.copy()
     config["output"] = '"/tmp/music"'
     config["lastfm_api_key"] = '<script>alert("x")</script>'
-    status = {
-        "state": "running",
-        "details": "<b>recording</b>",
-    }
+    status = {"state": "running", "details": "<b>recording</b>"}
 
     html = render_index(config, status, verbose_logging=True)
 
-    assert "Spoti2 - Linux Spotify Recorder" in html
-    assert '&lt;b&gt;recording&lt;/b&gt;' in html
+    assert "Spytify-LE - Linux Audio Recorder" in html
+    # Config values are server-rendered into attributes and must be escaped.
     assert '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;' in html
+    assert '&quot;/tmp/music&quot;' in html
     assert 'name="verbose" checked' in html
+    # Live state/details are populated client-side via textContent, not server HTML.
+    assert "<b>recording</b>" not in html
 
 
 def test_stop_sends_graceful_control_command(tmp_path):
