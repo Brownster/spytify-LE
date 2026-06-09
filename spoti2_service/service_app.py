@@ -72,6 +72,60 @@ def merge_web_config(config: Dict[str, Any], form: Dict[str, list]) -> Dict[str,
     return merged
 
 
+_WAITING_HTML = '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
+
+
+def filter_recorder_logs(recent_logs: list, verbose: bool) -> str:
+    """Filter raw recorder.log lines into color-coded HTML for the activity panel.
+
+    Matches the actual log wording: the save line is ``Saved /path`` (no colon),
+    so the keyword must be ``"Saved "`` rather than ``"Saved:"``.
+    """
+    if verbose:
+        keywords = [
+            "Saved ", "ERROR:", "WARNING:", "Track changed:", "Starting MPRIS",
+            "already exists", "Skipping incomplete track", "Recording", "LastFM", "Fetched",
+        ]
+        limit = 50
+        strip_prefix = False
+    else:
+        keywords = ["Saved ", "ERROR:", "already exists", "Skipping incomplete track"]
+        limit = 30
+        strip_prefix = True
+
+    filtered = []
+    for line in recent_logs:
+        if not any(keyword in line for keyword in keywords):
+            continue
+        cleaned = escape(line.strip()).replace("INFO: INFO:", "INFO:").replace("INFO INFO:", "INFO:")
+        if strip_prefix:
+            for prefix in ("INFO:", "DEBUG:"):
+                if cleaned.startswith(prefix):
+                    cleaned = cleaned[len(prefix):].strip()
+
+        if "ERROR" in line:
+            formatted = f'<div class="log-error">❌ {cleaned}</div>'
+        elif "WARNING" in line and verbose:
+            formatted = f'<div class="log-warning">⚠️ {cleaned}</div>'
+        elif "already exists" in line:
+            formatted = f'<div class="log-warning">⏭️ {cleaned}</div>'
+        elif "Skipping incomplete track" in line:
+            formatted = f'<div class="log-warning">⏭️ {cleaned}</div>'
+        elif "Saved " in line:
+            formatted = f'<div class="log-success">✅ {cleaned}</div>'
+        elif "Fetched" in line or "LastFM" in line:
+            formatted = f'<div class="log-info">📊 {cleaned}</div>'
+        elif "Track changed:" in line:
+            formatted = f'<div class="log-track">🎵 {cleaned}</div>'
+        else:
+            formatted = f'<div class="log-line">{cleaned}</div>'
+        filtered.append(formatted)
+
+    if not filtered:
+        return _WAITING_HTML
+    return "\n".join(reversed(filtered[-limit:]))
+
+
 def configure_logging(verbose: bool = False) -> None:
     """Configure logging to file and stdout."""
     handlers = [
@@ -138,10 +192,35 @@ class RecorderSupervisor:
             return
 
         logging.info("Starting RecorderSupervisor thread")
+        # Fresh session: clear the previous run's log so stale errors from an
+        # earlier recorder can't masquerade as current activity in the UI.
+        self._truncate_recorder_log()
         self._stop_event.clear()
         self._pause_event.clear()
         self._thread = threading.Thread(target=self._run_loop, daemon=True)
         self._thread.start()
+
+    def _truncate_recorder_log(self) -> None:
+        try:
+            RECORDER_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            RECORDER_LOG_PATH.write_text("", encoding="utf-8")
+        except Exception as e:
+            logging.debug("Could not truncate recorder log: %s", e)
+
+    def _recorder_log_reason(self) -> str:
+        """Best-effort one-line reason from the tail of the recorder log."""
+        try:
+            lines = [
+                ln.strip()
+                for ln in RECORDER_LOG_PATH.read_text(encoding="utf-8").splitlines()
+                if ln.strip()
+            ]
+        except Exception:
+            return ""
+        for line in reversed(lines[-25:]):
+            if any(tok in line for tok in ("Error", "Exception", "Traceback", "No module named")):
+                return line[:200]
+        return lines[-1][:200] if lines else ""
 
     def stop(self) -> None:
         """Stop recording (user-initiated)."""
@@ -449,8 +528,17 @@ class RecorderSupervisor:
                 logging.info("Recorder started successfully")
             else:
                 early_exit = self._process.poll()
-                logging.error("Recorder exited immediately with code %s", early_exit)
                 stdout_file.close()
+                reason = self._recorder_log_reason()
+                logging.error("Recorder exited immediately with code %s: %s", early_exit, reason)
+                detail = f"❌ Recorder failed to start (exit {early_exit})"
+                if reason:
+                    detail += f": {reason}"
+                self._set_status("error", detail)
+                if self._manual_stop or self._stop_event.is_set():
+                    break
+                # Back off before respawning so a crash-loop doesn't spin.
+                time.sleep(self.auto_restart_delay)
                 continue
 
             exit_code = None
@@ -569,79 +657,7 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
                     lines = f.readlines()
                     recent_logs = lines[-200:] if len(lines) > 200 else lines
 
-                    if verbose:
-                        # Verbose mode: show more log events
-                        verbose_keywords = [
-                            "Saved:",
-                            "ERROR:",
-                            "WARNING:",
-                            "Track changed:",
-                            "Starting MPRIS",
-                            "already exists",
-                            "Recording",
-                            "LastFM",
-                            "Fetched",
-                        ]
-
-                        filtered_lines = []
-                        for line in recent_logs:
-                            # Clean duplicates
-                            cleaned = escape(line.strip())
-                            cleaned = cleaned.replace("INFO: INFO:", "INFO:")
-                            cleaned = cleaned.replace("INFO INFO:", "INFO:")
-
-                            if any(keyword in line for keyword in verbose_keywords):
-                                # Add HTML formatting based on log type
-                                if "ERROR" in line:
-                                    formatted = f'<div class="log-error">❌ {cleaned}</div>'
-                                elif "WARNING" in line:
-                                    formatted = f'<div class="log-warning">⚠️ {cleaned}</div>'
-                                elif "Saved:" in line:
-                                    formatted = f'<div class="log-success">✅ {cleaned}</div>'
-                                elif "Fetched" in line or "LastFM" in line:
-                                    formatted = f'<div class="log-info">📊 {cleaned}</div>'
-                                elif "Track changed:" in line:
-                                    formatted = f'<div class="log-track">🎵 {cleaned}</div>'
-                                else:
-                                    formatted = f'<div class="log-line">{cleaned}</div>'
-                                filtered_lines.append(formatted)
-
-                        # Reverse so newest entries appear at top
-                        logs = "\n".join(reversed(filtered_lines[-50:])) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
-                    else:
-                        # Minimal mode: only show essential status events
-                        essential_keywords = [
-                            "Saved:",           # Track saved
-                            "ERROR:",           # Critical errors only
-                            "already exists",   # Duplicate detection
-                        ]
-
-                        filtered_lines = []
-                        for line in recent_logs:
-                            # Clean and filter
-                            cleaned = escape(line.strip())
-                            cleaned = cleaned.replace("INFO: INFO:", "INFO:")
-                            cleaned = cleaned.replace("INFO INFO:", "INFO:")
-
-                            if any(keyword in line for keyword in essential_keywords):
-                                # Remove INFO/DEBUG prefixes for cleaner display
-                                for prefix in ["INFO:", "DEBUG:"]:
-                                    if cleaned.startswith(prefix):
-                                        cleaned = cleaned[len(prefix):].strip()
-
-                                # Add HTML formatting based on log type
-                                if "ERROR" in line:
-                                    formatted = f'<div class="log-error">❌ {cleaned}</div>'
-                                elif "already exists" in line:
-                                    formatted = f'<div class="log-warning">⏭️ {cleaned}</div>'
-                                elif "Saved:" in line:
-                                    formatted = f'<div class="log-success">✅ {cleaned}</div>'
-                                else:
-                                    formatted = f'<div class="log-line">{cleaned}</div>'
-                                filtered_lines.append(formatted)
-
-                        # Reverse so newest entries appear at top
-                        logs = "\n".join(reversed(filtered_lines[-30:])) if filtered_lines else '<div class="log-waiting">🎵 Waiting for tracks to record...</div>'
+                    logs = filter_recorder_logs(recent_logs, verbose)
             else:
                 logs = "No logs available - recorder not started"
 
