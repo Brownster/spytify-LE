@@ -8,6 +8,7 @@ were actually tagged — making LastFM mistakes easy to spot. See
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
@@ -16,6 +17,11 @@ from pathlib import Path
 import tempfile
 import threading
 from typing import Any, Dict, List, Optional
+
+try:
+    import fcntl  # POSIX only
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 
 SCHEMA_VERSION = 1
@@ -68,9 +74,31 @@ class TrackHistoryWriter:
         self.cap = cap
         self._lock = threading.Lock()
 
+    @contextmanager
+    def _interprocess_lock(self):
+        """Serialize read-modify-write across processes (recorder vs. web service).
+
+        The threading.Lock only guards within one process; the recorder and the
+        web service are separate processes, so a flock on a sidecar lock file is
+        needed to stop a concurrent append from clobbering an edit (and vice versa).
+        """
+        if fcntl is None:  # pragma: no cover - non-POSIX
+            yield
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock_file = open(self.path.parent / (self.path.name + ".lock"), "w")
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            finally:
+                lock_file.close()
+
     def append(self, result: TrackResult) -> None:
         line = json.dumps(result.to_dict(), sort_keys=True)
-        with self._lock:
+        with self._lock, self._interprocess_lock():
             try:
                 lines = self._read_lines()
                 lines.append(line)
@@ -85,7 +113,7 @@ class TrackHistoryWriter:
         self, path: str, year: Optional[int] = None, genre: Optional[str] = None
     ) -> int:
         """Update year/genre on history records matching ``path``. Returns count updated."""
-        with self._lock:
+        with self._lock, self._interprocess_lock():
             lines = self._read_lines()
             updated = 0
             new_lines: List[str] = []

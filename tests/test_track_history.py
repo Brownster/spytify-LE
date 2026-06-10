@@ -52,6 +52,26 @@ def test_update_metadata_matches_by_path(tmp_path):
     assert writer.update_metadata("/m/missing.mp3", year=2000) == 0
 
 
+def test_concurrent_writers_do_not_lose_records(tmp_path):
+    """Two writer instances (proxy for recorder + service) must not clobber each other."""
+    import threading
+    path = tmp_path / "history.jsonl"
+    w1 = TrackHistoryWriter(path, cap=10000)
+    w2 = TrackHistoryWriter(path, cap=10000)
+
+    def hammer(writer, tag, n):
+        for i in range(n):
+            writer.append(TrackResult(outcome=SAVED, title=f"{tag}-{i}"))
+
+    t1 = threading.Thread(target=hammer, args=(w1, "a", 60))
+    t2 = threading.Thread(target=hammer, args=(w2, "b", 60))
+    t1.start(); t2.start(); t1.join(); t2.join()
+
+    # Without the interprocess lock, the per-instance locks would let the two
+    # read-modify-rewrite cycles clobber each other and drop records.
+    assert len(w1.read()) == 120
+
+
 def test_read_limit_and_missing_file(tmp_path):
     writer = TrackHistoryWriter(tmp_path / "missing.jsonl")
     assert writer.read() == []  # missing file -> empty

@@ -1042,8 +1042,10 @@ class SegmentManager:
             logger.info("Added existing file to playlist: %s", path)
         else:
             logger.info("Saved %s", path)
-        # Notify UI of successful save
-        if hasattr(self, 'ui_callback') and self.ui_callback:
+        # Notify UI of a save only when a file was actually written; an
+        # already-exists skip must not inflate the saved/tracks_recorded count
+        # (it's recorded as SKIPPED_EXISTS in the history below).
+        if did_save and self.ui_callback:
             self.ui_callback("saved", track_info)
 
         # Record the structured outcome for the recording history.

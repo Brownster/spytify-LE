@@ -425,6 +425,38 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         assert r.path and r.path.endswith("03 - Saved Song.mp3")
         shutil.rmtree(out_dir, ignore_errors=True)
 
+    def test_existing_file_skip_does_not_emit_saved(self):
+        """Re-exporting an existing file records SKIPPED_EXISTS and does not re-fire 'saved'."""
+        import shutil
+        from spotify_splitter.track_history import SKIPPED_EXISTS
+        out_dir = Path("/tmp/spytify-skip-test")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        results = []
+        ui = Mock()
+        manager = SegmentManager(
+            samplerate=44100,
+            output_dir=out_dir,
+            audio_queue=queue.Queue(),
+            event_queue=queue.Queue(),
+            lastfm_api_key=None,
+            allow_overwrite=False,
+            ui_callback=ui,
+            on_track_result=results.append,
+        )
+        track = TrackInfo(
+            artist="Ada", title="Once", album="Album", art_uri=None,
+            id="spotify:track:x", track_number=1, position=0, duration_ms=1000,
+        )
+        seg = AudioSegment.silent(duration=1000)
+        manager._export(seg, track)          # first: real save
+        manager._export(seg, track)          # second: file exists -> skip
+
+        outcomes = [r.outcome for r in results]
+        assert outcomes == [SAVED, SKIPPED_EXISTS]
+        saved_calls = [c for c in ui.call_args_list if c.args[0] == "saved"]
+        assert len(saved_calls) == 1  # only the real save fired 'saved'
+        shutil.rmtree(out_dir, ignore_errors=True)
+
     def test_enhanced_track_marker_conversion(self):
         """Test conversion from TrackMarker to EnhancedTrackMarker."""
         # Set up test data
