@@ -423,7 +423,7 @@ class TestMainIntegration:
         # Should use headless profile settings (larger queue size, higher latency)
         assert call_args.kwargs['queue_size'] >= 300  # Headless profile uses larger buffers
     
-    @patch('spotify_splitter.main.SystemCapabilityDetector.detect_capabilities')
+    @patch('spotify_splitter.config_profiles.SystemCapabilityDetector.detect_capabilities')
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.EnhancedAudioStream')
@@ -686,7 +686,7 @@ class TestMainIntegration:
     
     def test_profiles_command(self):
         """Test the profiles command functionality."""
-        with patch('spotify_splitter.main.SystemCapabilityDetector.detect_capabilities') as mock_detect:
+        with patch('spotify_splitter.config_profiles.SystemCapabilityDetector.detect_capabilities') as mock_detect:
             from spotify_splitter.config_profiles import SystemCapabilities
             
             mock_capabilities = SystemCapabilities(
