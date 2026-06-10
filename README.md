@@ -9,7 +9,7 @@ Record Spotify desktop playback on Linux and save each track as an individual au
 
 - 🎵 **Automatic Track Splitting** - Monitors Spotify desktop via MPRIS and splits tracks automatically
 - 🎨 **Rich Metadata** - Fetches year and genre from LastFM, plus album art from Spotify
-- 🌐 **Modern Web UI** - Beautiful 3-tab interface for easy control and monitoring with minimal, clean logs
+- 🌐 **Modern Web UI** - Focused web interface for recording, history, settings, and diagnostics
 - ⚡ **High Quality** - Records lossless via PulseAudio/PipeWire monitor sources
 - 📝 **Playlist Support** - Generate M3U playlists with optional bundling
 - 🚫 **Ad Filtering** - Automatically skips advertisements
@@ -87,7 +87,8 @@ The web UI shows readiness checks for common setup problems:
 
 The web interface includes:
 
-- **Record Tab** - Start/Stop/Pause recording, live status, readiness checks, and recorded-track history
+- **Record Tab** - Start/Stop/Pause recording, live status, and compact readiness checks
+- **History Tab** - Review saved/skipped/failed tracks and correct year/genre tags inline
 - **Settings Tab** - Configure output directory, format, and LastFM API key
 - **Advanced Tab** - Hidden advanced buffer/debug controls for troubleshooting
 
@@ -203,8 +204,11 @@ The modern web interface provides:
 ### Record Tab
 - **Live Status** - See recording state with clear indicators showing current track
 - **Control Buttons** - Start, Stop, Pause, Resume recording
-- **Readiness Checks** - Run `doctor` checks from the browser before recording
-- **Recorded Tracks** - Review saved/skipped/failed tracks and correct year/genre tags inline
+- **Readiness Indicator** - See setup health at a glance, expand details, and rerun checks
+
+### History Tab
+- **Recorded Tracks** - Review saved/skipped/failed tracks
+- **Metadata Corrections** - Correct year/genre tags inline for saved files
 
 ### Settings Tab
 - **Output directory configuration** - Where tracks are saved

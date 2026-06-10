@@ -151,7 +151,9 @@ def test_render_index_escapes_config_values():
     assert '&quot;/tmp/music&quot;' in html
     # Live state/details are populated client-side via textContent, not server HTML.
     assert "<b>recording</b>" not in html
-    assert "Readiness Checks" in html
+    assert 'id="doctor-pill"' in html
+    assert 'id="doctor-details"' in html
+    assert 'data-view="history"' in html
     assert "Run checks again" in html
     assert "fetch('/doctor')" in html
 

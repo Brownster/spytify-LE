@@ -114,7 +114,41 @@ def render_index(
     .panel-head h2 {{ margin-bottom: 0; }}
 
     /* Diagnostics */
-    .doctor-summary {{ color: {p["text_muted"]}; font-size: 0.9rem; }}
+    .readiness-strip {{
+      display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+      padding: 0.75rem 1rem; margin-bottom: 1.25rem;
+      background: {p["panel"]}; border: 1px solid {p["border"]}; border-radius: 8px;
+    }}
+    .doctor-pill {{
+      width: auto; flex: 1; min-width: 0; display: flex; align-items: center; gap: 0.65rem;
+      padding: 0; background: transparent; border: none; color: {p["text"]};
+      box-shadow: none; transform: none; text-align: left;
+    }}
+    .doctor-pill:hover {{ transform: none; box-shadow: none; }}
+    .doctor-pill-icon {{
+      width: 1.35rem; height: 1.35rem; border-radius: 50%; display: inline-flex;
+      align-items: center; justify-content: center; flex: 0 0 auto;
+      background: rgba(139,148,158,0.16); color: {p["text_muted"]};
+      font-size: 0.85rem; font-weight: 800;
+    }}
+    .doctor-pill-label {{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+    .doctor-pill.ok .doctor-pill-icon {{ background: rgba(29,185,84,0.14); color: {p["success"]}; }}
+    .doctor-pill.warning .doctor-pill-icon {{ background: rgba(210,153,34,0.16); color: {p["warning"]}; }}
+    .doctor-pill.error .doctor-pill-icon {{ background: rgba(248,81,73,0.14); color: {p["error"]}; }}
+    .doctor-refresh {{
+      width: 2.25rem; height: 2.25rem; padding: 0; flex: 0 0 auto;
+      display: inline-flex; align-items: center; justify-content: center;
+      background: {p["panel_alt"]}; border: 1px solid {p["border"]}; color: {p["text_muted"]};
+      border-radius: 8px; font-size: 1rem;
+    }}
+    .doctor-refresh:hover {{ color: {p["text"]}; background: {p["border"]}; box-shadow: none; }}
+    .doctor-details {{
+      display: none; margin-top: -0.75rem; margin-bottom: 1.25rem;
+      background: {p["panel"]}; border: 1px solid {p["border"]}; border-radius: 8px;
+      padding: 1rem 1.25rem;
+    }}
+    .doctor-details.open {{ display: block; }}
+    .doctor-summary {{ color: {p["text_muted"]}; font-size: 0.9rem; margin-bottom: 0.65rem; }}
     .doctor-list {{ display: grid; gap: 0.55rem; }}
     .doctor-item {{
       display: grid; grid-template-columns: 1rem minmax(9rem, 0.45fr) 1fr;
@@ -224,6 +258,7 @@ def render_index(
     <div class="brand">Spytify-LE</div>
     <div class="brand-sub">Linux Audio Recorder</div>
     <div class="nav-item active" data-view="record" onclick="switchView('record', this)">🎙️ Record</div>
+    <div class="nav-item" data-view="history" onclick="switchView('history', this)">▤ History</div>
     <div class="nav-item" data-view="settings" onclick="switchView('settings', this)">⚙️ Settings</div>
     <div class="nav-item" data-view="advanced" onclick="switchView('advanced', this)">🛠️ Advanced</div>
     <div class="sidebar-footer"><span class="dot"></span><span id="system-state">System Ready</span></div>
@@ -232,14 +267,15 @@ def render_index(
   <main class="main">
     <!-- Record -->
     <section id="view-record" class="view active">
-      <div class="panel" id="doctor-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Readiness Checks</h2>
-            <div id="doctor-summary" class="doctor-summary">Checking system…</div>
-          </div>
-          <button type="button" class="secondary small-btn" onclick="refreshDoctor()">Run checks again</button>
-        </div>
+      <div class="readiness-strip">
+        <button type="button" id="doctor-pill" class="doctor-pill" onclick="toggleDoctorDetails()">
+          <span id="doctor-pill-icon" class="doctor-pill-icon">…</span>
+          <span id="doctor-pill-label" class="doctor-pill-label">Checking system…</span>
+        </button>
+        <button type="button" class="doctor-refresh" title="Run checks again" onclick="refreshDoctor()">↻</button>
+      </div>
+      <div id="doctor-details" class="doctor-details">
+        <div id="doctor-summary" class="doctor-summary">Checking system…</div>
         <div id="doctor-list" class="doctor-list"></div>
       </div>
 
@@ -277,7 +313,10 @@ def render_index(
           <div id="timer-display" class="help-text" style="display:none; font-weight:600;"></div>
         </div>
       </div>
+    </section>
 
+    <!-- History -->
+    <section id="view-history" class="view">
       <div class="panel">
         <h2>Recorded Tracks</h2>
         <table class="history">
@@ -496,14 +535,32 @@ def render_index(
 
     const DOCTOR_ICON = {{ ok: '✓', warning: '!', error: '✗' }};
 
+    function toggleDoctorDetails() {{
+      document.getElementById('doctor-details').classList.toggle('open');
+    }}
+
     function refreshDoctor() {{
       const summary = document.getElementById('doctor-summary');
       const list = document.getElementById('doctor-list');
+      const pill = document.getElementById('doctor-pill');
+      const pillIcon = document.getElementById('doctor-pill-icon');
+      const pillLabel = document.getElementById('doctor-pill-label');
       summary.textContent = 'Checking system…';
+      pill.className = 'doctor-pill';
+      pillIcon.textContent = '…';
+      pillLabel.textContent = 'Checking system…';
       fetch('/doctor').then(r => r.json()).then(data => {{
-        summary.textContent = data.summary || (data.ok ? 'Ready to record' : 'Checks need attention');
+        const checks = data.checks || [];
+        const hasError = checks.some(c => c.status === 'error');
+        const hasWarning = checks.some(c => c.status === 'warning');
+        const state = hasError ? 'error' : (hasWarning ? 'warning' : 'ok');
+        const label = data.summary || (data.ok ? 'Ready to record' : 'Checks need attention');
+        summary.textContent = label;
+        pill.className = 'doctor-pill ' + state;
+        pillIcon.textContent = DOCTOR_ICON[state] || '!';
+        pillLabel.textContent = label;
         list.replaceChildren();
-        for (const check of (data.checks || [])) {{
+        for (const check of checks) {{
           const item = document.createElement('div');
           item.className = 'doctor-item doctor-' + (check.status || 'warning');
 
@@ -533,6 +590,9 @@ def render_index(
         }}
       }}).catch(e => {{
         summary.textContent = 'Could not run checks';
+        pill.className = 'doctor-pill error';
+        pillIcon.textContent = '✗';
+        pillLabel.textContent = 'Could not run checks';
         console.error('doctor', e);
       }});
     }}
