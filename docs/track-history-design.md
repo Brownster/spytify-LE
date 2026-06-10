@@ -1,6 +1,12 @@
 # Track History & Metadata Correction — Design
 
-Status: **Phase 1 complete** (steps 1–3) · Phase 2 not started · Updated 2026-06-10
+Status: **Phase 1 + 2 complete** · Updated 2026-06-10
+
+Phase 2 built: `spotify_splitter/metadata_edit.py` (`edit_track_metadata` — mutagen
+`date`/`genre` rewrite, path-validated to the output dir, year 1900–2100) +
+`TrackHistoryWriter.update_metadata`; `/edit-metadata` POST endpoint; per-row ✎
+inline edit in the Recorded Tracks table (saved rows only). Tests:
+`tests/test_metadata_edit.py`.
 
 Built: `spotify_splitter/track_history.py` (`TrackResult` + capped JSONL
 `TrackHistoryWriter`); `SegmentManager.on_track_result` emits at all four outcome
