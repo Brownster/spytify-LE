@@ -36,6 +36,22 @@ def test_history_is_capped(tmp_path):
     assert [r["title"] for r in records] == ["t5", "t4", "t3"]
 
 
+def test_update_metadata_matches_by_path(tmp_path):
+    writer = TrackHistoryWriter(tmp_path / "history.jsonl")
+    writer.append(TrackResult(outcome=SAVED, title="A", path="/m/a.mp3", year=2025, genre="pop"))
+    writer.append(TrackResult(outcome=SAVED, title="B", path="/m/b.mp3", year=1990))
+
+    count = writer.update_metadata("/m/a.mp3", year=1972, genre="rock")
+    assert count == 1
+
+    records = {r["path"]: r for r in writer.read()}
+    assert records["/m/a.mp3"]["year"] == 1972
+    assert records["/m/a.mp3"]["genre"] == "rock"
+    assert records["/m/b.mp3"]["year"] == 1990  # untouched
+
+    assert writer.update_metadata("/m/missing.mp3", year=2000) == 0
+
+
 def test_read_limit_and_missing_file(tmp_path):
     writer = TrackHistoryWriter(tmp_path / "missing.jsonl")
     assert writer.read() == []  # missing file -> empty

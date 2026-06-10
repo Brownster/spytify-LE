@@ -14,6 +14,11 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qs
 
+from spotify_splitter.metadata_edit import (
+    MetadataEditError,
+    edit_track_metadata,
+    validate_year,
+)
 from spotify_splitter.track_history import TrackHistoryWriter
 from spotify_splitter.user_config import (
     DEFAULT_CONFIG,
@@ -568,6 +573,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._handle_pause()
         elif self.path == "/resume":
             self._handle_resume()
+        elif self.path == "/edit-metadata":
+            self._handle_edit_metadata()
         else:
             self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -607,6 +614,27 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         except Exception as e:
             logging.error(f"Error serving logo: {e}")
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+
+    def _handle_edit_metadata(self) -> None:
+        """Rewrite a saved track's year/genre tags and sync the history record."""
+        length = int(self.headers.get("Content-Length", "0"))
+        form = parse_qs(self.rfile.read(length).decode("utf-8"))
+        path = form.get("path", [""])[0]
+        genre = (form.get("genre", [""])[0] or "").strip() or None
+        config = load_user_config(self.server.app.config_path)
+        output_dir = config.get("output") or DEFAULT_CONFIG["output"]
+        try:
+            year = validate_year(form.get("year", [""])[0])
+            edit_track_metadata(path, output_dir, year, genre)
+            TrackHistoryWriter(RECORDER_HISTORY_PATH).update_metadata(path, year, genre)
+        except MetadataEditError as e:
+            self._send_json({"ok": False, "error": str(e)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        except Exception as e:  # pragma: no cover - defensive
+            logging.error("Metadata edit failed: %s", e)
+            self._send_json({"ok": False, "error": "edit failed"}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json({"ok": True})
 
     def _handle_update(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
@@ -657,9 +685,9 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Location", "/")
         self.end_headers()
 
-    def _send_json(self, payload: Dict[str, str]) -> None:
+    def _send_json(self, payload: Dict[str, Any], status: HTTPStatus = HTTPStatus.OK) -> None:
         body = json.dumps(payload)
-        self.send_response(HTTPStatus.OK)
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

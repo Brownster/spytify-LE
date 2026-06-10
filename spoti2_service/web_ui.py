@@ -169,8 +169,13 @@ def render_index(
     table.history th.hist-year, table.history td.hist-year {{ width: 4rem; font-variant-numeric: tabular-nums; }}
     table.history td .hist-artist {{ color: {p["text_muted"]}; }}
     table.history td.hist-empty {{ text-align: center; color: {p["text_muted"]}; font-style: italic; padding: 1.5rem; }}
+    table.history td.hist-actions {{ width: 5rem; text-align: right; white-space: nowrap; }}
     tr.hist-failed td {{ color: {p["error"]}; }}
     tr.hist-skipped td {{ color: {p["text_muted"]}; }}
+    .hist-btn {{ background: none; border: 1px solid {p["border"]}; border-radius: 5px; color: {p["text_muted"]}; padding: 0.2rem 0.45rem; font-size: 0.8rem; cursor: pointer; width: auto; font-weight: 500; }}
+    .hist-btn:hover {{ color: {p["text"]}; border-color: {p["accent"]}; box-shadow: none; transform: none; }}
+    .hist-btn.save {{ color: {p["accent"]}; border-color: {p["accent"]}; }}
+    table.history input.hist-edit {{ width: 100%; padding: 0.25rem 0.4rem; background: {p["bg"]}; border: 1px solid {p["accent"]}; border-radius: 4px; color: {p["text"]}; font-size: 0.85rem; }}
 
     /* Forms (Settings / Advanced) */
     .form-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem; }}
@@ -239,8 +244,8 @@ def render_index(
       <div class="panel">
         <h2>Recorded Tracks</h2>
         <table class="history">
-          <thead><tr><th class="hist-icon"></th><th>Track</th><th class="hist-year">Year</th><th>Genre</th></tr></thead>
-          <tbody id="history-rows"><tr><td colspan="4" class="hist-empty">No tracks recorded yet…</td></tr></tbody>
+          <thead><tr><th class="hist-icon"></th><th>Track</th><th class="hist-year">Year</th><th>Genre</th><th class="hist-actions"></th></tr></thead>
+          <tbody id="history-rows"><tr><td colspan="5" class="hist-empty">No tracks recorded yet…</td></tr></tbody>
         </table>
       </div>
     </section>
@@ -445,12 +450,48 @@ def render_index(
       saved: '✅', skipped_incomplete: '⏭️', skipped_exists: '⏭️', failed: '❌'
     }};
 
+    function makeCell(cls) {{ const td = document.createElement('td'); if (cls) td.className = cls; return td; }}
+
+    function saveEdit(rec, yearInput, genreInput) {{
+      const body = new URLSearchParams({{
+        path: rec.path || '', year: yearInput.value.trim(), genre: genreInput.value.trim(),
+      }});
+      fetch('/edit-metadata', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+        body: body.toString(),
+      }}).then(r => r.json()).then(res => {{
+        if (res.ok) refreshHistory();
+        else alert('Could not save: ' + (res.error || 'unknown error'));
+      }}).catch(e => alert('Could not save: ' + e));
+    }}
+
+    function startEdit(tr, rec, yearCell, genreCell, actionsCell) {{
+      yearCell.textContent = ''; genreCell.textContent = ''; actionsCell.textContent = '';
+      const yearInput = document.createElement('input');
+      yearInput.className = 'hist-edit'; yearInput.value = rec.year || '';
+      yearInput.placeholder = 'year';
+      const genreInput = document.createElement('input');
+      genreInput.className = 'hist-edit'; genreInput.value = rec.genre || '';
+      genreInput.placeholder = 'genre';
+      yearCell.appendChild(yearInput); genreCell.appendChild(genreInput);
+
+      const save = document.createElement('button');
+      save.className = 'hist-btn save'; save.textContent = 'Save';
+      save.onclick = () => saveEdit(rec, yearInput, genreInput);
+      const cancel = document.createElement('button');
+      cancel.className = 'hist-btn'; cancel.textContent = '✕';
+      cancel.onclick = refreshHistory;
+      actionsCell.appendChild(save); actionsCell.appendChild(cancel);
+      yearInput.focus();
+    }}
+
     function refreshHistory() {{
       fetch('/history').then(r => r.json()).then(data => {{
         const tbody = document.getElementById('history-rows');
         const records = data.records || [];
         if (!records.length) {{
-          tbody.innerHTML = '<tr><td colspan="4" class="hist-empty">No tracks recorded yet…</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="5" class="hist-empty">No tracks recorded yet…</td></tr>';
           return;
         }}
         tbody.replaceChildren();
@@ -460,13 +501,12 @@ def render_index(
           if (outcome === 'failed') tr.className = 'hist-failed';
           else if (outcome.startsWith('skipped')) tr.className = 'hist-skipped';
 
-          const icon = document.createElement('td');
-          icon.className = 'hist-icon';
+          const icon = makeCell('hist-icon');
           icon.textContent = HIST_ICON[outcome] || '•';
           icon.title = (outcome + (rec.reason ? ': ' + rec.reason : ''));
           tr.appendChild(icon);
 
-          const track = document.createElement('td');
+          const track = makeCell();
           const title = document.createElement('span');
           title.textContent = rec.title || '(unknown)';
           const artist = document.createElement('span');
@@ -475,14 +515,23 @@ def render_index(
           track.appendChild(title); track.appendChild(artist);
           tr.appendChild(track);
 
-          const year = document.createElement('td');
-          year.className = 'hist-year';
+          const year = makeCell('hist-year');
           year.textContent = rec.year || '';
           tr.appendChild(year);
 
-          const genre = document.createElement('td');
+          const genre = makeCell();
           genre.textContent = rec.genre || '';
           tr.appendChild(genre);
+
+          const actions = makeCell('hist-actions');
+          // Only saved tracks have a file on disk to re-tag.
+          if (outcome === 'saved' && rec.path) {{
+            const edit = document.createElement('button');
+            edit.className = 'hist-btn'; edit.textContent = '✎'; edit.title = 'Edit year / genre';
+            edit.onclick = () => startEdit(tr, rec, year, genre, actions);
+            actions.appendChild(edit);
+          }}
+          tr.appendChild(actions);
 
           tbody.appendChild(tr);
         }}

@@ -81,6 +81,30 @@ class TrackHistoryWriter:
                 # History is best-effort; never let it disrupt recording.
                 pass
 
+    def update_metadata(
+        self, path: str, year: Optional[int] = None, genre: Optional[str] = None
+    ) -> int:
+        """Update year/genre on history records matching ``path``. Returns count updated."""
+        with self._lock:
+            lines = self._read_lines()
+            updated = 0
+            new_lines: List[str] = []
+            for raw in lines:
+                try:
+                    rec = json.loads(raw)
+                except Exception:
+                    new_lines.append(raw)
+                    continue
+                if rec.get("path") == path:
+                    rec["year"] = year
+                    rec["genre"] = genre
+                    raw = json.dumps(rec, sort_keys=True)
+                    updated += 1
+                new_lines.append(raw)
+            if updated:
+                self._atomic_write(new_lines)
+            return updated
+
     def read(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         """Return parsed records, newest first (up to ``limit``)."""
         with self._lock:
