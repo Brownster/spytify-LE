@@ -60,23 +60,36 @@ poetry install
 
 ## Quick Start
 
-### Web UI (Recommended)
+### First Run (Recommended)
 
-Start the web service for the easiest experience:
+Open Spotify, start playing a track, then run:
 
 ```bash
-# Start the web interface (runs on http://localhost:8730)
-python -m spoti2_service
+# Check system dependencies, Spotify detection, ffmpeg, and output settings
+spotify-splitter doctor
 
-# Or customize host/port
-python -m spoti2_service --host 0.0.0.0 --port 8080
+# Start the local web UI at http://127.0.0.1:8730
+spotify-splitter web
 ```
 
-Then open http://localhost:8730 in your browser. You'll see:
+`spotify-splitter web` binds to `127.0.0.1` by default and opens your browser.
+Use `--no-open` if you do not want it to launch a browser.
 
-- **Record Tab** - Start/Stop/Pause recording, live status, and recording log
+The web UI shows readiness checks for common setup problems:
+
+- Spotify not detected
+- Spotify detected but not playing
+- `ffmpeg` missing
+- PulseAudio/PipeWire not reachable
+- output folder not writable
+
+### Web UI
+
+The web interface includes:
+
+- **Record Tab** - Start/Stop/Pause recording, live status, readiness checks, and recorded-track history
 - **Settings Tab** - Configure output directory, format, and LastFM API key
-- **Advanced Tab** - Performance settings and player configuration
+- **Advanced Tab** - Hidden advanced buffer/debug controls for troubleshooting
 
 ### CLI Usage
 
@@ -86,6 +99,9 @@ spotify-splitter configure
 
 # Basic recording
 spotify-splitter record
+
+# Record with an automatic timer
+spotify-splitter record --duration "4h29m"
 
 # Custom output directory and format
 spotify-splitter --output ~/Music/Spotify --format flac record
@@ -131,7 +147,6 @@ The timer displays in the UI with:
 - Elapsed time vs total time
 
 The recording stops gracefully, ensuring all buffered audio is processed and the current track is saved completely.
-```
 
 By default, tracks are saved to `~/Music/Spotify Splitter/<Artist>/<Album>/<Track>.mp3` with full ID3 tags including:
 - Artist, Title, Album, Track Number
@@ -188,14 +203,8 @@ The modern web interface provides:
 ### Record Tab
 - **Live Status** - See recording state with clear indicators showing current track
 - **Control Buttons** - Start, Stop, Pause, Resume recording
-- **Recording Log** - Clean, minimal logs showing only essential events:
-  - Tracks saved with file paths
-  - Critical errors
-  - Duplicate file detections
-- **Verbose Toggle** - Optional checkbox to show detailed logs for troubleshooting:
-  - Track changes
-  - MPRIS events
-  - Warnings and buffer status
+- **Readiness Checks** - Run `doctor` checks from the browser before recording
+- **Recorded Tracks** - Review saved/skipped/failed tracks and correct year/genre tags inline
 
 ### Settings Tab
 - **Output directory configuration** - Where tracks are saved
@@ -206,9 +215,9 @@ The modern web interface provides:
 
 ### Advanced Tab
 - **Performance profile selection** - Auto, desktop, headless, high_performance
-- **Buffer management settings** - Adaptive buffers, monitoring, metrics
+- **Buffer management settings** - Adaptive buffers and debug-only monitoring
 - **Player name configuration** - MPRIS player selection
-- **Debug options** - Advanced diagnostics
+- **Debug options** - Hidden behind an expandable advanced section
 
 ## Service Mode & Systemd Integration
 
@@ -216,7 +225,7 @@ Run Spoti2 as a background service with automatic restarts:
 
 ```bash
 # Start service manually
-python -m spoti2_service
+spotify-splitter web --no-open
 ```
 
 ### Example systemd Unit
@@ -231,7 +240,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/path/to/spoti2
-ExecStart=/usr/bin/python -m spoti2_service
+ExecStart=/usr/bin/spotify-splitter web --no-open
 Restart=on-failure
 RestartSec=15
 Environment=PYTHONUNBUFFERED=1
