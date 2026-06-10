@@ -1,4 +1,4 @@
-"""Auxiliary CLI commands (``profiles``, ``configure``).
+"""Auxiliary CLI commands (``profiles``, ``configure``, ``doctor``, ``web``).
 
 Kept separate from the large ``record`` command in ``main.py``. Registered onto
 the shared Typer ``app`` via :func:`register`.
@@ -10,12 +10,99 @@ from typing import Optional
 import typer
 
 from .config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
+from .doctor import run_doctor
 from .user_config import (
     DEFAULT_CONFIG,
     get_config_path,
     load_user_config,
     save_user_config,
 )
+
+
+def doctor(
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file to validate (defaults to ~/.config/spotify_splitter/config.json)",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Print machine-readable JSON.",
+    ),
+) -> None:
+    """Check whether the system is ready to record Spotify playback."""
+    import json
+    from rich.console import Console
+    from rich.table import Table
+
+    report = run_doctor(config_path)
+
+    if json_output:
+        typer.echo(json.dumps(report.to_dict(), indent=2, sort_keys=True))
+    else:
+        console = Console()
+        color = "green" if report.ok else "red"
+        console.print(f"[bold {color}]{report.summary}[/bold {color}]")
+
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Status", no_wrap=True)
+        table.add_column("Check")
+        table.add_column("Result")
+        table.add_column("Action")
+
+        icons = {"ok": "✓", "warning": "!", "error": "✗"}
+        styles = {"ok": "green", "warning": "yellow", "error": "red"}
+        for check in report.checks:
+            table.add_row(
+                f"[{styles[check.status]}]{icons[check.status]}[/{styles[check.status]}]",
+                check.label,
+                check.message,
+                check.action or "",
+            )
+        console.print(table)
+
+    if not report.ok:
+        raise typer.Exit(code=1)
+
+
+def web(
+    ctx: typer.Context,
+    config_path: Optional[str] = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file for the web UI to manage.",
+    ),
+    host: str = typer.Option(
+        "127.0.0.1",
+        "--host",
+        help="Host/IP for the web UI. Use 0.0.0.0 only on a trusted network.",
+    ),
+    port: int = typer.Option(
+        8730,
+        "--port",
+        help="Port for the web UI.",
+    ),
+    open_browser: bool = typer.Option(
+        True,
+        "--open/--no-open",
+        help="Open the web UI in the default browser after startup.",
+    ),
+) -> None:
+    """Start the local web UI."""
+    from spoti2_service.service_app import run_service
+
+    resolved_config = config_path or (ctx.obj.get("config_path") if ctx.obj else None)
+    verbose = bool(ctx.obj.get("verbose")) if ctx.obj else False
+    run_service(
+        host=host,
+        port=port,
+        config=resolved_config,
+        verbose=verbose,
+        open_browser=open_browser,
+    )
 
 
 def profiles():
@@ -308,5 +395,7 @@ def configure(
 
 def register(app: typer.Typer) -> None:
     """Register the auxiliary commands onto the shared Typer app."""
+    app.command()(doctor)
+    app.command()(web)
     app.command()(profiles)
     app.command()(configure)

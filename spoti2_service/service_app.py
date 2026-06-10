@@ -6,6 +6,7 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from datetime import datetime, timezone
 from html import escape
 from http import HTTPStatus
@@ -19,6 +20,7 @@ from spotify_splitter.metadata_edit import (
     edit_track_metadata,
     validate_year,
 )
+from spotify_splitter.doctor import run_doctor
 from spotify_splitter.track_history import TrackHistoryWriter
 from spotify_splitter.user_config import (
     DEFAULT_CONFIG,
@@ -546,6 +548,8 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             self._send_json(self.server.app.supervisor.status())
         elif self.path == "/history":
             self._serve_history()
+        elif self.path == "/doctor":
+            self._serve_doctor()
         elif self.path == "/logo.png":
             self._serve_logo()
         else:
@@ -559,6 +563,26 @@ class Spoti2RequestHandler(BaseHTTPRequestHandler):
             logging.debug("Failed to read track history: %s", e)
             records = []
         self._send_json({"records": records})
+
+    def _serve_doctor(self) -> None:
+        """Serve current first-run diagnostics for the web UI."""
+        try:
+            report = run_doctor(self.server.app.config_path)
+            payload = report.to_dict()
+        except Exception as e:  # pragma: no cover - defensive
+            logging.debug("Failed to run doctor checks: %s", e)
+            payload = {
+                "ok": False,
+                "summary": "Could not run checks",
+                "checks": [{
+                    "id": "doctor",
+                    "label": "Diagnostics",
+                    "status": "error",
+                    "message": str(e),
+                    "action": "Check service logs for details.",
+                }],
+            }
+        self._send_json(payload)
 
     def do_POST(self) -> None:  # noqa: N802 (BaseHTTPRequestHandler API)
         if self.path == "/update":
@@ -707,11 +731,13 @@ class Spoti2Service:
         port: int = 8730,
         config_path: Optional[str] = None,
         verbose: bool = False,
+        open_browser: bool = False,
     ) -> None:
         configure_logging(verbose)
         self.host = host
         self.port = port
         self.config_path = config_path
+        self.open_browser = open_browser
         self.supervisor = RecorderSupervisor(config_path=config_path)
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._http_thread: Optional[threading.Thread] = None
@@ -724,6 +750,8 @@ class Spoti2Service:
                 self.host,
             )
         self._setup_http_server()
+        if self.open_browser:
+            webbrowser.open(f"http://{self.host}:{self.port}")
         self.supervisor.start()
         self._http_thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._http_thread.start()
@@ -765,6 +793,18 @@ class Spoti2Service:
         self.supervisor.stop()
 
 
-def run_service(host: str = "0.0.0.0", port: int = 8730, config: Optional[str] = None, verbose: bool = False) -> None:
-    service = Spoti2Service(host=host, port=port, config_path=config, verbose=verbose)
+def run_service(
+    host: str = "127.0.0.1",
+    port: int = 8730,
+    config: Optional[str] = None,
+    verbose: bool = False,
+    open_browser: bool = False,
+) -> None:
+    service = Spoti2Service(
+        host=host,
+        port=port,
+        config_path=config,
+        verbose=verbose,
+        open_browser=open_browser,
+    )
     service.start()

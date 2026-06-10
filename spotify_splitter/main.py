@@ -99,6 +99,7 @@ def main_callback(
         "format": resolved_format,
         "config": config,
         "config_path": config_path,
+        "verbose": verbose,
     }
 
 
@@ -198,6 +199,7 @@ def record(
     max_duration: str = typer.Option(
         None,
         "--max-duration",
+        "--duration",
         help="Maximum recording duration (e.g., '4h29m', '2h30m', '90m', '5400s'). Recording stops automatically when timer expires.",
     ),
     status_file: str = typer.Option(

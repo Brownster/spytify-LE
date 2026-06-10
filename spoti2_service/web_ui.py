@@ -110,6 +110,26 @@ def render_index(
       margin-bottom: 1.25rem;
     }}
     .panel h2 {{ font-size: 1.15rem; font-weight: 600; margin-bottom: 1rem; }}
+    .panel-head {{ display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }}
+    .panel-head h2 {{ margin-bottom: 0; }}
+
+    /* Diagnostics */
+    .doctor-summary {{ color: {p["text_muted"]}; font-size: 0.9rem; }}
+    .doctor-list {{ display: grid; gap: 0.55rem; }}
+    .doctor-item {{
+      display: grid; grid-template-columns: 1rem minmax(9rem, 0.45fr) 1fr;
+      gap: 0.65rem; align-items: start; padding: 0.65rem 0;
+      border-top: 1px solid {p["border"]};
+    }}
+    .doctor-item:first-child {{ border-top: none; }}
+    .doctor-icon {{ font-weight: 700; }}
+    .doctor-label {{ font-weight: 600; }}
+    .doctor-message {{ color: {p["text"]}; }}
+    .doctor-action {{ color: {p["text_muted"]}; font-size: 0.85rem; margin-top: 0.2rem; }}
+    .doctor-ok .doctor-icon {{ color: {p["success"]}; }}
+    .doctor-warning .doctor-icon {{ color: {p["warning"]}; }}
+    .doctor-error .doctor-icon {{ color: {p["error"]}; }}
+    .small-btn {{ width: auto; padding: 0.45rem 0.8rem; font-size: 0.85rem; }}
 
     /* Record top row */
     .record-top {{ display: flex; gap: 1.25rem; align-items: stretch; flex-wrap: wrap; }}
@@ -191,6 +211,12 @@ def render_index(
     input[type="checkbox"] {{ width: 17px; height: 17px; cursor: pointer; accent-color: {p["accent"]}; }}
     .help-text {{ color: {p["text_muted"]}; font-size: 0.85rem; margin-top: 0.4rem; }}
     .save-btn {{ width: auto; padding: 0.6rem 1.5rem; margin-top: 0.5rem; }}
+    details.advanced-details {{
+      border: 1px solid {p["border"]}; border-radius: 8px; padding: 1rem;
+      background: {p["panel_alt"]};
+    }}
+    details.advanced-details summary {{ cursor: pointer; font-weight: 700; color: {p["text"]}; }}
+    details.advanced-details .advanced-inner {{ margin-top: 1rem; }}
   </style>
 </head>
 <body>
@@ -206,6 +232,17 @@ def render_index(
   <main class="main">
     <!-- Record -->
     <section id="view-record" class="view active">
+      <div class="panel" id="doctor-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Readiness Checks</h2>
+            <div id="doctor-summary" class="doctor-summary">Checking system…</div>
+          </div>
+          <button type="button" class="secondary small-btn" onclick="refreshDoctor()">Run checks again</button>
+        </div>
+        <div id="doctor-list" class="doctor-list"></div>
+      </div>
+
       <div class="record-top">
         <div class="panel np-card">
           <div id="np-art" class="np-art">◉</div>
@@ -320,38 +357,43 @@ def render_index(
     <!-- Advanced -->
     <section id="view-advanced" class="view">
       <form class="panel" method="post" action="/update">
-        <h2>Performance</h2>
-        <label>
-          <span>Configuration Profile</span>
-          <select name="profile">
-            {"".join(_select_options(config.get("profile", "auto"), ["auto","desktop","headless","high_performance"]))}
-          </select>
-          <div class="help-text">Optimize for your system</div>
-        </label>
-        <div class="checkbox-group" style="margin-top:1rem;">
-          <label>
-            <input type="hidden" name="enable_adaptive" value="0">
-            <input type="checkbox" name="enable_adaptive" value="on" {checked(config.get("enable_adaptive", True))}>
-            <span>Adaptive Buffers</span>
-          </label>
-          <label>
-            <input type="hidden" name="enable_monitoring" value="0">
-            <input type="checkbox" name="enable_monitoring" value="on" {checked(config.get("enable_monitoring", False))}>
-            <span>Buffer Monitoring (debug)</span>
-          </label>
-          <label>
-            <input type="hidden" name="debug_mode" value="0">
-            <input type="checkbox" name="debug_mode" value="on" {checked(config.get("debug_mode", False))}>
-            <span>Debug Mode</span>
-          </label>
-        </div>
+        <h2>Advanced</h2>
+        <details class="advanced-details">
+          <summary>Recording engine controls</summary>
+          <div class="advanced-inner">
+            <label>
+              <span>Configuration Profile</span>
+              <select name="profile">
+                {"".join(_select_options(config.get("profile", "auto"), ["auto","desktop","headless","high_performance"]))}
+              </select>
+              <div class="help-text">Optimize for your system</div>
+            </label>
+            <div class="checkbox-group" style="margin-top:1rem;">
+              <label>
+                <input type="hidden" name="enable_adaptive" value="0">
+                <input type="checkbox" name="enable_adaptive" value="on" {checked(config.get("enable_adaptive", True))}>
+                <span>Adaptive Buffers</span>
+              </label>
+              <label>
+                <input type="hidden" name="enable_monitoring" value="0">
+                <input type="checkbox" name="enable_monitoring" value="on" {checked(config.get("enable_monitoring", False))}>
+                <span>Buffer Monitoring (debug)</span>
+              </label>
+              <label>
+                <input type="hidden" name="debug_mode" value="0">
+                <input type="checkbox" name="debug_mode" value="on" {checked(config.get("debug_mode", False))}>
+                <span>Debug Mode</span>
+              </label>
+            </div>
 
-        <h2 style="margin-top:2rem;">Player</h2>
-        <label>
-          <span>MPRIS Player Name</span>
-          <input type="text" name="player" value="{attr(config.get("player", DEFAULT_CONFIG["player"]))}" />
-          <div class="help-text">Usually "spotify" for the Spotify desktop client</div>
-        </label>
+            <h2 style="margin-top:2rem;">Player</h2>
+            <label>
+              <span>MPRIS Player Name</span>
+              <input type="text" name="player" value="{attr(config.get("player", DEFAULT_CONFIG["player"]))}" />
+              <div class="help-text">Usually "spotify" for the Spotify desktop client</div>
+            </label>
+          </div>
+        </details>
         <button type="submit" class="save-btn">Save Advanced Settings</button>
       </form>
     </section>
@@ -452,6 +494,49 @@ def render_index(
 
     function makeCell(cls) {{ const td = document.createElement('td'); if (cls) td.className = cls; return td; }}
 
+    const DOCTOR_ICON = {{ ok: '✓', warning: '!', error: '✗' }};
+
+    function refreshDoctor() {{
+      const summary = document.getElementById('doctor-summary');
+      const list = document.getElementById('doctor-list');
+      summary.textContent = 'Checking system…';
+      fetch('/doctor').then(r => r.json()).then(data => {{
+        summary.textContent = data.summary || (data.ok ? 'Ready to record' : 'Checks need attention');
+        list.replaceChildren();
+        for (const check of (data.checks || [])) {{
+          const item = document.createElement('div');
+          item.className = 'doctor-item doctor-' + (check.status || 'warning');
+
+          const icon = document.createElement('div');
+          icon.className = 'doctor-icon';
+          icon.textContent = DOCTOR_ICON[check.status] || '!';
+          item.appendChild(icon);
+
+          const label = document.createElement('div');
+          label.className = 'doctor-label';
+          label.textContent = check.label || check.id || 'Check';
+          item.appendChild(label);
+
+          const detail = document.createElement('div');
+          const message = document.createElement('div');
+          message.className = 'doctor-message';
+          message.textContent = check.message || '';
+          detail.appendChild(message);
+          if (check.action) {{
+            const action = document.createElement('div');
+            action.className = 'doctor-action';
+            action.textContent = check.action;
+            detail.appendChild(action);
+          }}
+          item.appendChild(detail);
+          list.appendChild(item);
+        }}
+      }}).catch(e => {{
+        summary.textContent = 'Could not run checks';
+        console.error('doctor', e);
+      }});
+    }}
+
     function saveEdit(rec, yearInput, genreInput) {{
       const body = new URLSearchParams({{
         path: rec.path || '', year: yearInput.value.trim(), genre: genreInput.value.trim(),
@@ -538,7 +623,7 @@ def render_index(
       }}).catch(e => console.error('history', e));
     }}
 
-    refreshStatus(); refreshHistory();
+    refreshStatus(); refreshHistory(); refreshDoctor();
     setInterval(refreshHistory, 5000);
     setInterval(refreshStatus, 2000);
     setInterval(paintProgress, 1000);

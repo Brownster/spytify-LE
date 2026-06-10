@@ -8,6 +8,7 @@ import subprocess
 
 from spoti2_service.service_app import (
     RecorderSupervisor,
+    run_service,
     merge_web_config,
 )
 from spoti2_service.web_ui import render_index
@@ -150,6 +151,35 @@ def test_render_index_escapes_config_values():
     assert '&quot;/tmp/music&quot;' in html
     # Live state/details are populated client-side via textContent, not server HTML.
     assert "<b>recording</b>" not in html
+    assert "Readiness Checks" in html
+    assert "Run checks again" in html
+    assert "fetch('/doctor')" in html
+
+
+def test_run_service_defaults_to_localhost_without_browser(monkeypatch):
+    calls = []
+
+    class FakeService:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def start(self):
+            calls.append({"started": True})
+
+    monkeypatch.setattr("spoti2_service.service_app.Spoti2Service", FakeService)
+
+    run_service()
+
+    assert calls == [
+        {
+            "host": "127.0.0.1",
+            "port": 8730,
+            "config_path": None,
+            "verbose": False,
+            "open_browser": False,
+        },
+        {"started": True},
+    ]
 
 
 def test_stop_sends_graceful_control_command(tmp_path):

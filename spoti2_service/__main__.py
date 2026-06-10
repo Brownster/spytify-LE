@@ -28,12 +28,23 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose logging",
     )
+    parser.add_argument(
+        "--no-open",
+        action="store_true",
+        help="Do not open the web UI in the default browser",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    run_service(host=args.host, port=args.port, config=args.config, verbose=args.verbose)
+    run_service(
+        host=args.host,
+        port=args.port,
+        config=args.config,
+        verbose=args.verbose,
+        open_browser=not args.no_open,
+    )
 
 
 if __name__ == "__main__":
