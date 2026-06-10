@@ -18,6 +18,7 @@ PALETTE = {
     "success": "#1DB954",
     "warning": "#d29922",
     "error": "#f85149",
+    "recording": "#ff3b30",
 }
 
 
@@ -204,6 +205,16 @@ def render_index(
       background: {p["panel_alt"]}; border: 1px solid {p["border"]}; color: {p["text"]};
     }}
     button.secondary:hover {{ background: {p["border"]}; box-shadow: none; }}
+    button#start-btn.recording {{
+      background: {p["recording"]}; color: #fff; cursor: default; opacity: 1;
+      animation: rec-pulse 1.6s ease-in-out infinite;
+    }}
+    button#start-btn:disabled {{ opacity: 1; }}
+    button#start-btn.recording:hover {{ box-shadow: 0 4px 12px rgba(255,59,48,0.35); }}
+    @keyframes rec-pulse {{
+      0%, 100% {{ box-shadow: 0 0 0 0 rgba(255,59,48,0.55); }}
+      70% {{ box-shadow: 0 0 0 9px rgba(255,59,48,0); }}
+    }}
     .btn-row {{ display: flex; gap: 0.75rem; }}
 
     /* Toggle */
@@ -297,7 +308,7 @@ def render_index(
         </div>
 
         <div class="panel controls-card">
-          <form method="post" action="/start"><button type="submit">▶ Start Recording</button></form>
+          <form method="post" action="/start"><button type="submit" id="start-btn">▶ Start Recording</button></form>
           <div class="btn-row">
             <form method="post" action="/pause" style="flex:1;"><button type="submit" class="secondary">❚❚ Pause</button></form>
             <form method="post" action="/stop" style="flex:1;"><button type="submit" class="secondary">■ Stop</button></form>
@@ -484,6 +495,20 @@ def render_index(
         document.getElementById('np-dot').style.background = COLORS[st] || '{p["text"]}';
         document.getElementById('system-state').textContent =
           (st === 'running') ? 'Recording' : (data.details || 'System Ready');
+
+        // Start button reflects recording state: green "Start" -> red "Recording".
+        const startBtn = document.getElementById('start-btn');
+        if (startBtn) {{
+          if (st === 'running') {{
+            startBtn.textContent = '● Recording';
+            startBtn.classList.add('recording');
+            startBtn.disabled = true;   // status, not an action — use Stop to end
+          }} else {{
+            startBtn.textContent = '▶ Start Recording';
+            startBtn.classList.remove('recording');
+            startBtn.disabled = false;
+          }}
+        }}
 
         const track = data.track || {{}};
         const title = track.title || (st === 'running' ? 'Recording…' : 'Waiting for playback…');
