@@ -739,7 +739,8 @@ class Spoti2Service:
         self._setup_http_server()
         if self.open_browser:
             webbrowser.open(f"http://{self.host}:{self.port}")
-        self.supervisor.start()
+        # Recording is user-initiated: the supervisor starts from the web UI's
+        # Start button (/start), not at service launch.
         self._http_thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
         self._http_thread.start()
         self._install_signal_handlers()
