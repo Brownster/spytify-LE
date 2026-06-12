@@ -147,7 +147,6 @@ class AdaptiveBufferManager:
             BufferMetrics with current utilization data
         """
         with self._lock:
-            current_time = time.time()
             queue_size = queue.qsize()
             max_size = queue.maxsize or self.current_queue_size
             

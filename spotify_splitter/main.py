@@ -9,7 +9,6 @@ import queue
 import time
 
 from rich.live import Live
-from rich.spinner import Spinner
 from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.text import Text

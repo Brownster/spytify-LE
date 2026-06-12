@@ -8,7 +8,6 @@ collection for buffer performance analysis.
 
 import logging
 import threading
-import time
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timedelta

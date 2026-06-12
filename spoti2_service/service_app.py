@@ -8,7 +8,6 @@ import threading
 import time
 import webbrowser
 from datetime import datetime, timezone
-from html import escape
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
