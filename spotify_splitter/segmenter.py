@@ -17,10 +17,9 @@ import requests
 
 from .mpris import TrackInfo
 from .track_boundary_detector import TrackBoundaryDetector, BoundaryResult, TrackMarker as EnhancedTrackMarker
-from .error_recovery import ErrorRecoveryManager
 from .lastfm_api import get_lastfm_client
 # AudioChunk/ChunkLedger live in their own module; re-exported here for compatibility.
-from .chunk_ledger import AudioChunk, ChunkLedger
+from .chunk_ledger import AudioChunk, ChunkLedger  # noqa: F401
 from .track_history import (
     TrackResult,
     SAVED,
@@ -106,10 +105,6 @@ class SegmentManager:
         ui_callback: Optional[callable] = None,
         grace_period_ms: int = 500,
         max_correction_ms: int = 2000,
-        error_recovery: Optional[ErrorRecoveryManager] = None,
-        enable_error_recovery: bool = True,
-        max_processing_retries: int = 3,
-        enable_graceful_degradation: bool = True,
         lastfm_api_key: Optional[str] = None,
         allow_overwrite: bool = False,
         on_track_result: Optional[callable] = None,
@@ -188,29 +183,14 @@ class SegmentManager:
             max_correction_ms=max_correction_ms
         )
         
-        # Initialize error recovery system
-        self.error_recovery = error_recovery or ErrorRecoveryManager()
-        self.enable_error_recovery = enable_error_recovery
-        self.max_processing_retries = max_processing_retries
-        self.enable_graceful_degradation = enable_graceful_degradation
-        
         # Error tracking and statistics
         self.processing_errors = 0
         self.export_errors = 0
         self.recovery_attempts = 0
         self.successful_recoveries = 0
-        self.degraded_exports = 0
         self._stats_lock = threading.Lock()
-        
-        # Processing state for error recovery
-        self.current_processing_track = None
-        self.processing_retry_count = 0
-        self.last_successful_export = None
-        
-        logger.info(
-            "SegmentManager initialized with error recovery: enabled=%s, max_retries=%d, graceful_degradation=%s",
-            enable_error_recovery, max_processing_retries, enable_graceful_degradation
-        )
+
+        logger.info("SegmentManager initialized")
 
         # Log LastFM configuration status
         if self.lastfm_api_key:
@@ -320,9 +300,7 @@ class SegmentManager:
                         return
 
                     assert isinstance(item, ExportJob)
-                    success = self._export_with_error_handling(item.audio, item.track_info)
-                    if success:
-                        self._set_stat("last_successful_export", item.track_info)
+                    self._export_with_error_handling(item.audio, item.track_info)
                 finally:
                     self.export_queue.task_done()
         finally:
@@ -333,26 +311,7 @@ class SegmentManager:
         with self._stats_lock:
             setattr(self, name, getattr(self, name) + amount)
 
-    def _set_stat(self, name: str, value) -> None:
-        """Set a diagnostic value shared across worker threads."""
-        with self._stats_lock:
-            setattr(self, name, value)
-
-    def _stats_snapshot(self) -> dict:
-        """Return a consistent diagnostic snapshot."""
-        with self._stats_lock:
-            return {
-                "processing_errors": self.processing_errors,
-                "export_errors": self.export_errors,
-                "recovery_attempts": self.recovery_attempts,
-                "successful_recoveries": self.successful_recoveries,
-                "degraded_exports": self.degraded_exports,
-                "current_processing_track": self.current_processing_track,
-                "processing_retry_count": self.processing_retry_count,
-                "last_successful_export": self.last_successful_export,
-            }
-
-    def _submit_export_job(self, audio: AudioSegment, track_info: TrackInfo) -> bool:
+    def _submit_export_job(self, audio: AudioSegment, track_info: TrackInfo) -> None:
         """Queue a completed segment for export without blocking audio ingestion."""
         job = ExportJob(audio=audio, track_info=track_info)
         warned = False
@@ -360,7 +319,7 @@ class SegmentManager:
         while True:
             try:
                 self.export_queue.put(job, timeout=1.0)
-                return True
+                return
             except queue.Full:
                 if not warned:
                     logger.warning("Export queue full; continuing audio ingest while waiting")
@@ -587,10 +546,6 @@ class SegmentManager:
                 self.track_markers.pop(0)
             return
 
-        # Set current processing track for error recovery
-        self._set_stat("current_processing_track", start_marker.track_info)
-        self._set_stat("processing_retry_count", 0)
-
         logger.info("Processing segment for: %s", start_marker.track_info.title)
         if self.ui_callback:
             self.ui_callback("processing", start_marker.track_info)
@@ -728,9 +683,6 @@ class SegmentManager:
                         "Skipping incomplete track '%s' (captured %dms of expected %dms)",
                         start_marker.track_info.title, actual_duration_ms, expected_duration_ms,
                     )
-                    is_valid, diagnostic = self.boundary_detector.validate_frame_integrity()
-                    if not is_valid:
-                        logger.debug("Frame integrity note while skipping: %s", diagnostic)
                     self._emit_track_result(
                         SKIPPED_INCOMPLETE, start_marker.track_info,
                         reason=f"captured {actual_duration_ms}ms of expected {expected_duration_ms}ms",
@@ -747,22 +699,18 @@ class SegmentManager:
                     corrected_chunk = self._apply_final_boundary_correction(
                         song_chunk, start_marker.track_info, boundary_result
                     )
-                    
+
                     # Queue export work off the segment thread.
-                    export_queued = self._submit_export_job(corrected_chunk, start_marker.track_info)
-                    if not export_queued:
-                        return False
+                    self._submit_export_job(corrected_chunk, start_marker.track_info)
             else:
                 logger.debug("No expected duration available, saving track")
                 # Apply final boundary correction before export
                 corrected_chunk = self._apply_final_boundary_correction(
                     song_chunk, start_marker.track_info, boundary_result
                 )
-                
+
                 # Queue export work off the segment thread.
-                export_queued = self._submit_export_job(corrected_chunk, start_marker.track_info)
-                if not export_queued:
-                    return False
+                self._submit_export_job(corrected_chunk, start_marker.track_info)
 
             # Clean up buffer and markers using the cleanup timestamp
             self._advance_after_segment(end_marker, window, cleanup_ms)
@@ -1130,94 +1078,3 @@ class SegmentManager:
     def _is_transient_export_error(self, error: Exception) -> bool:
         """Return true for export errors worth retrying on the export worker."""
         return isinstance(error, (OSError, IOError, TimeoutError, requests.RequestException))
-
-    def get_error_statistics(self) -> dict:
-        """
-        Get comprehensive error statistics for the segment manager.
-        
-        Returns:
-            Dictionary containing error statistics and recovery information
-        """
-        snapshot = self._stats_snapshot()
-        current_track = snapshot["current_processing_track"]
-        last_export = snapshot["last_successful_export"]
-        stats = {
-            "processing_errors": snapshot["processing_errors"],
-            "export_errors": snapshot["export_errors"],
-            "recovery_attempts": snapshot["recovery_attempts"],
-            "successful_recoveries": snapshot["successful_recoveries"],
-            "degraded_exports": snapshot["degraded_exports"],
-            "current_processing_track": current_track.title if current_track else None,
-            "processing_retry_count": snapshot["processing_retry_count"],
-            "last_successful_export": last_export.title if last_export else None,
-            "error_recovery_enabled": self.enable_error_recovery,
-            "graceful_degradation_enabled": self.enable_graceful_degradation,
-            "max_processing_retries": self.max_processing_retries
-        }
-        
-        # Add error recovery manager statistics if available
-        if self.error_recovery:
-            recovery_stats = self.error_recovery.get_statistics()
-            stats["error_recovery_manager"] = recovery_stats
-        
-        return stats
-
-    def generate_error_report(self) -> str:
-        """
-        Generate a comprehensive error report for diagnostics.
-        
-        Returns:
-            Formatted error report string
-        """
-        stats = self.get_error_statistics()
-        
-        report_lines = [
-            "=== SegmentManager Error Report ===",
-            f"Processing Errors: {stats['processing_errors']}",
-            f"Export Errors: {stats['export_errors']}",
-            f"Recovery Attempts: {stats['recovery_attempts']}",
-            f"Successful Recoveries: {stats['successful_recoveries']}",
-            f"Degraded Exports: {stats['degraded_exports']}",
-            f"Error Recovery Enabled: {stats['error_recovery_enabled']}",
-            f"Graceful Degradation Enabled: {stats['graceful_degradation_enabled']}",
-            ""
-        ]
-        
-        # Add current state information
-        if stats['current_processing_track']:
-            report_lines.append(f"Current Processing Track: {stats['current_processing_track']}")
-            report_lines.append(f"Processing Retry Count: {stats['processing_retry_count']}")
-        
-        if stats['last_successful_export']:
-            report_lines.append(f"Last Successful Export: {stats['last_successful_export']}")
-        
-        report_lines.append("")
-        
-        # Add error recovery manager diagnostics if available
-        if self.error_recovery:
-            try:
-                diagnostics = self.error_recovery.get_diagnostics()
-                report_lines.extend([
-                    "=== Error Recovery Manager Diagnostics ===",
-                    f"Total Errors: {diagnostics.total_errors}",
-                    f"Error Rate (per hour): {diagnostics.error_rate_per_hour:.2f}",
-                    f"Recovery Success Rate: {diagnostics.recovery_success_rate:.1%}",
-                    ""
-                ])
-                
-                if diagnostics.most_common_errors:
-                    report_lines.append("Most Common Errors:")
-                    for error_type, count in diagnostics.most_common_errors:
-                        report_lines.append(f"  - {error_type}: {count}")
-                    report_lines.append("")
-                
-                if diagnostics.recommendations:
-                    report_lines.append("Recommendations:")
-                    for rec in diagnostics.recommendations:
-                        report_lines.append(f"  - {rec}")
-                    report_lines.append("")
-                        
-            except Exception as e:
-                report_lines.append(f"Error generating recovery diagnostics: {e}")
-        
-        return "\n".join(report_lines)

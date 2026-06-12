@@ -10,7 +10,6 @@ from unittest.mock import Mock, patch
 from spotify_splitter.track_boundary_detector import (
     TrackBoundaryDetector,
     AudioContinuityValidator,
-    FrameAccountingSystem,
     BoundaryResult,
     TrackMarker
 )
@@ -89,63 +88,6 @@ class TestAudioContinuityValidator:
         
         result = self.validator.validate_continuity(before, after)
         assert result is True  # Should assume valid for short segments
-
-
-class TestFrameAccountingSystem:
-    """Test FrameAccountingSystem functionality."""
-    
-    def setup_method(self):
-        self.accounting = FrameAccountingSystem()
-    
-    def test_record_frames_processed(self):
-        """Test recording processed frames."""
-        self.accounting.record_frames(0, 1000, 'processed')
-        assert self.accounting.processed_frames == 1000
-        assert len(self.accounting.frame_history) == 1
-    
-    def test_record_frames_expected(self):
-        """Test recording expected frames."""
-        self.accounting.record_frames(0, 1000, 'expected')
-        assert self.accounting.expected_frames == 1000
-        assert len(self.accounting.frame_history) == 1
-    
-    def test_validate_frame_integrity_valid(self):
-        """Test frame integrity validation when frames match."""
-        self.accounting.record_frames(0, 1000, 'expected')
-        self.accounting.record_frames(0, 1000, 'processed')
-        
-        is_valid, message = self.accounting.validate_frame_integrity()
-        assert is_valid is True
-        assert "1000 frames" in message
-    
-    def test_validate_frame_integrity_loss(self):
-        """Test frame integrity validation when frames are lost."""
-        self.accounting.record_frames(0, 1000, 'expected')
-        self.accounting.record_frames(0, 800, 'processed')
-        
-        is_valid, message = self.accounting.validate_frame_integrity()
-        assert is_valid is False
-        assert "200 frames missing" in message
-    
-    def test_validate_frame_integrity_duplication(self):
-        """Test frame integrity validation when frames are duplicated."""
-        self.accounting.record_frames(0, 1000, 'expected')
-        self.accounting.record_frames(0, 1200, 'processed')
-        
-        is_valid, message = self.accounting.validate_frame_integrity()
-        assert is_valid is False
-        assert "200 extra frames" in message
-    
-    def test_reset(self):
-        """Test resetting frame accounting."""
-        self.accounting.record_frames(0, 1000, 'expected')
-        self.accounting.record_frames(0, 1000, 'processed')
-        
-        self.accounting.reset()
-        
-        assert self.accounting.processed_frames == 0
-        assert self.accounting.expected_frames == 0
-        assert len(self.accounting.frame_history) == 0
 
 
 class TestTrackBoundaryDetector:
@@ -310,25 +252,6 @@ class TestTrackBoundaryDetector:
             result = self.detector.correct_boundary(audio_buffer, original_boundary)
             assert result is None
     
-    def test_validate_frame_integrity(self):
-        """Test frame integrity validation."""
-        # Record some frames
-        self.detector.frame_accounting.record_frames(0, 1000, 'expected')
-        self.detector.frame_accounting.record_frames(0, 1000, 'processed')
-        
-        is_valid, message = self.detector.validate_frame_integrity()
-        assert is_valid is True
-        assert "1000 frames" in message
-    
-    def test_reset_accounting(self):
-        """Test resetting frame accounting."""
-        self.detector.frame_accounting.record_frames(0, 1000, 'expected')
-        
-        self.detector.reset_accounting()
-        
-        assert self.detector.frame_accounting.processed_frames == 0
-        assert self.detector.frame_accounting.expected_frames == 0
-    
     def test_calculate_boundary_confidence(self):
         """Test boundary confidence calculation."""
         audio_buffer = self.create_test_audio_buffer(5000)
@@ -435,7 +358,3 @@ class TestIntegration:
         assert result.start_frame >= 0
         assert result.end_frame <= len(audio_buffer)
         assert result.confidence > 0
-        
-        # Validate frame integrity - we only recorded expected frames, so should show missing processed frames
-        is_valid, message = self.detector.validate_frame_integrity()
-        assert not is_valid and "missing" in message  # Should show frames missing since we didn't process them

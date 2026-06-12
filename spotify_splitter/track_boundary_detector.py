@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
-from collections import deque
 import numpy as np
 from pydub import AudioSegment
 
@@ -122,55 +121,6 @@ class AudioContinuityValidator:
         return True
 
 
-class FrameAccountingSystem:
-    """Tracks audio frames to prevent loss or duplication."""
-    
-    def __init__(self):
-        self.processed_frames = 0
-        self.expected_frames = 0
-        self.frame_history = deque(maxlen=1000)  # Track recent frame operations
-    
-    def record_frames(self, start_frame: int, end_frame: int, operation: str):
-        """Record frame operation for accounting."""
-        frame_count = end_frame - start_frame
-        self.frame_history.append({
-            'start': start_frame,
-            'end': end_frame,
-            'count': frame_count,
-            'operation': operation
-        })
-        
-        if operation == 'processed':
-            self.processed_frames += frame_count
-        elif operation == 'expected':
-            self.expected_frames += frame_count
-    
-    def validate_frame_integrity(self) -> Tuple[bool, str]:
-        """
-        Validate that no frames were lost or duplicated.
-        
-        Returns:
-            Tuple of (is_valid, diagnostic_message)
-        """
-        if self.expected_frames == 0:
-            return True, "No frames expected yet"
-            
-        if self.processed_frames == self.expected_frames:
-            return True, f"Frame integrity valid: {self.processed_frames} frames"
-        elif self.processed_frames < self.expected_frames:
-            lost = self.expected_frames - self.processed_frames
-            return False, f"Frame loss detected: {lost} frames missing"
-        else:
-            duplicated = self.processed_frames - self.expected_frames
-            return False, f"Frame duplication detected: {duplicated} extra frames"
-    
-    def reset(self):
-        """Reset frame accounting."""
-        self.processed_frames = 0
-        self.expected_frames = 0
-        self.frame_history.clear()
-
-
 class TrackBoundaryDetector:
     """
     Enhanced track boundary detection with grace period support and continuity validation.
@@ -186,10 +136,8 @@ class TrackBoundaryDetector:
         """
         self.grace_period_ms = grace_period_ms
         self.max_correction_ms = max_correction_ms
-        self.boundary_cache = {}
         self.continuity_validator = AudioContinuityValidator()
-        self.frame_accounting = FrameAccountingSystem()
-        
+
     def detect_boundary(self, audio_buffer: AudioSegment, 
                        markers: List[TrackMarker]) -> Optional[BoundaryResult]:
         """
@@ -240,14 +188,7 @@ class TrackBoundaryDetector:
             corrected_result = self.correct_boundary(audio_buffer, boundary_result)
             if corrected_result:
                 boundary_result = corrected_result
-                
-        # Record frame accounting
-        self.frame_accounting.record_frames(
-            boundary_result.start_frame, 
-            boundary_result.end_frame, 
-            'expected'
-        )
-        
+
         return boundary_result
     
     def apply_grace_period(self, start_timestamp: int, end_timestamp: int) -> Tuple[int, int]:
@@ -363,13 +304,5 @@ class TrackBoundaryDetector:
         
         # Higher RMS generally indicates better signal
         confidence = min(1.0, rms / 1000.0)  # Normalize to 0-1 range
-        
+
         return confidence
-    
-    def validate_frame_integrity(self) -> Tuple[bool, str]:
-        """Validate frame accounting integrity."""
-        return self.frame_accounting.validate_frame_integrity()
-    
-    def reset_accounting(self):
-        """Reset frame accounting system."""
-        self.frame_accounting.reset()

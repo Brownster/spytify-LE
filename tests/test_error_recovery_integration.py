@@ -71,9 +71,9 @@ class TestErrorRecoveryIntegration:
         return Mock()
     
     @pytest.fixture
-    def segment_manager(self, temp_output_dir, audio_queue, event_queue, 
-                       ui_callback_mock, error_recovery_manager):
-        """Create SegmentManager with error recovery for testing."""
+    def segment_manager(self, temp_output_dir, audio_queue, event_queue,
+                       ui_callback_mock):
+        """Create SegmentManager for testing."""
         return SegmentManager(
             samplerate=44100,
             output_dir=temp_output_dir,
@@ -81,10 +81,6 @@ class TestErrorRecoveryIntegration:
             audio_queue=audio_queue,
             event_queue=event_queue,
             ui_callback=ui_callback_mock,
-            error_recovery=error_recovery_manager,
-            enable_error_recovery=True,
-            max_processing_retries=3,
-            enable_graceful_degradation=True
         )
     
     def test_segment_processing_error_is_reported_without_retry(
@@ -148,9 +144,9 @@ class TestErrorRecoveryIntegration:
         failure_calls = [call for call in ui_callback_calls if call[0] == "processing_failure"]
 
         assert not hasattr(segment_manager, "_export_with_minimal_processing")
+        assert not hasattr(segment_manager, "degraded_exports")
         assert len(degraded_calls) == 0
         assert len(failure_calls) == 1
-        assert segment_manager.degraded_exports == 0
     
     def test_export_error_recovery(self, segment_manager, mock_track_info, ui_callback_mock):
         """Test error recovery during export operations."""
@@ -376,8 +372,7 @@ class TestErrorRecoveryIntegration:
         assert segment_manager.export_errors == 1
         assert segment_manager.recovery_attempts == 1
         assert segment_manager.successful_recoveries == 1
-        assert segment_manager.degraded_exports == 0
-        
+
         # Verify UI was notified of various events
         ui_callback_calls = [call.args[0] for call in ui_callback_mock.call_args_list]
         
@@ -386,53 +381,18 @@ class TestErrorRecoveryIntegration:
         
         assert found_events == expected_events
     
-    def test_error_statistics_and_diagnostics(
-        self, segment_manager, error_recovery_manager, mock_track_info
-    ):
-        """Test error statistics collection and diagnostic reporting."""
-        # Simulate some errors
-        test_errors = [
-            ValueError("Test error 1"),
-            IOError("Test error 2"),
-            RuntimeError("Test error 3")
-        ]
-        
-        for error in test_errors:
-            error_recovery_manager.handle_error(error, "test_context")
-
+    def test_stat_counters_are_thread_safe_increments(self, segment_manager):
+        """The surviving diagnostic counters increment under the stats lock."""
         segment_manager._increment_stat("processing_errors", 2)
         segment_manager._increment_stat("export_errors")
         segment_manager._increment_stat("recovery_attempts", 3)
         segment_manager._increment_stat("successful_recoveries")
-        segment_manager._increment_stat("degraded_exports")
-        segment_manager._set_stat("current_processing_track", mock_track_info)
-        segment_manager._set_stat("processing_retry_count", 2)
-        segment_manager._set_stat("last_successful_export", mock_track_info)
-        
-        # Get statistics
-        stats = segment_manager.get_error_statistics()
-        
-        assert "processing_errors" in stats
-        assert "export_errors" in stats
-        assert "recovery_attempts" in stats
-        assert stats["processing_errors"] == 2
-        assert stats["export_errors"] == 1
-        assert stats["recovery_attempts"] == 3
-        assert stats["successful_recoveries"] == 1
-        assert stats["degraded_exports"] == 1
-        assert stats["current_processing_track"] == "Test Track"
-        assert stats["processing_retry_count"] == 2
-        assert stats["last_successful_export"] == "Test Track"
-        assert "error_recovery_enabled" in stats
-        assert stats["error_recovery_enabled"] is True
-        
-        # Test diagnostic report generation
-        report = segment_manager.generate_error_report()
-        
-        assert "SegmentManager Error Report" in report
-        assert "Error Recovery Manager Diagnostics" in report
-        assert len(report) > 100  # Should be a substantial report
-    
+
+        assert segment_manager.processing_errors == 2
+        assert segment_manager.export_errors == 1
+        assert segment_manager.recovery_attempts == 3
+        assert segment_manager.successful_recoveries == 1
+
     def test_concurrent_error_handling(self, segment_manager, mock_track_info, ui_callback_mock):
         """Test error handling under concurrent processing scenarios."""
         # Create multiple threads that process segments simultaneously

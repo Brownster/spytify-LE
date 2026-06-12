@@ -313,18 +313,14 @@ class TestEnhancedSegmentProcessing(unittest.TestCase):
         
         # An incomplete track (large duration mismatch) is skipped, not failed.
         with patch.object(self.segment_manager.boundary_detector, 'detect_boundary', return_value=boundary_result):
-            with patch.object(self.segment_manager.boundary_detector, 'validate_frame_integrity',
-                            return_value=(False, "Frame loss detected: 100 frames missing")) as mock_integrity:
-                with patch('spotify_splitter.segmenter.logger') as mock_logger:
-                    self.segment_manager.process_segments()
+            with patch('spotify_splitter.segmenter.logger') as mock_logger:
+                self.segment_manager.process_segments()
 
-                    # Frame integrity is still consulted while skipping...
-                    mock_integrity.assert_called()
-                    # ...and the skip is reported at INFO (not a WARNING/ERROR failure).
-                    assert any(
-                        "Skipping incomplete track" in str(c.args[0])
-                        for c in mock_logger.info.call_args_list
-                    ), "expected an INFO 'Skipping incomplete track' log"
+                # The skip is reported at INFO (not a WARNING/ERROR failure).
+                assert any(
+                    "Skipping incomplete track" in str(c.args[0])
+                    for c in mock_logger.info.call_args_list
+                ), "expected an INFO 'Skipping incomplete track' log"
 
         # Export should not be called due to large duration mismatch
         mock_export.assert_not_called()
@@ -516,9 +512,6 @@ class TestSegmentManagerIntegration(unittest.TestCase):
         # Add some test data
         self.segment_manager.track_markers = [TrackMarker(0, Mock())]
         self.segment_manager.continuous_buffer = AudioSegment.silent(duration=1000)
-        
-        # Simulate some boundary detector state
-        self.segment_manager.boundary_detector.frame_accounting.processed_frames = 100
         
         # Flush cache
         self.segment_manager.flush_cache()
