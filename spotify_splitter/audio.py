@@ -100,6 +100,7 @@ class AudioStream:
 
     def __exit__(self, exc_type, exc, tb):
         self.stream.stop()
+        self.stream.close()
         logger.debug("Audio stream stopped")
 
     def read(self, timeout: float = 1.0) -> np.ndarray:

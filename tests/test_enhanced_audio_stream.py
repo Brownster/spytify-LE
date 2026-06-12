@@ -13,7 +13,7 @@ from queue import Queue, Full
 from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime, timedelta
 
-from spotify_splitter.audio import EnhancedAudioStream
+from spotify_splitter.audio import AudioStream, EnhancedAudioStream
 from spotify_splitter.buffer_management import (
     AdaptiveBufferManager, BufferMetrics, BufferHealth, HealthStatus
 )
@@ -241,6 +241,17 @@ class TestEnhancedAudioStreamIntegration:
         # Test context manager exit
         mock_stream.stop.assert_called()
         mock_stream.close.assert_called()
+
+    def test_basic_context_manager_closes_stream(self, mock_sounddevice):
+        """Test base AudioStream closes the PortAudio stream on exit."""
+        stream = AudioStream("test_device")
+        mock_stream = stream.stream
+
+        with stream:
+            mock_stream.start.assert_called_once()
+
+        mock_stream.stop.assert_called_once()
+        mock_stream.close.assert_called_once()
     
     def test_context_manager_with_startup_error(self, enhanced_stream, mock_sounddevice):
         """Test context manager handling of startup errors."""

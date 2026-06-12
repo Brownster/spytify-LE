@@ -10,8 +10,6 @@ from collections import namedtuple
 from typing import Callable, Optional
 import logging
 import json
-import time
-import threading
 try:
     from pydbus.errors import DBusError
 except Exception:  # pragma: no cover - fallback if gi is missing
