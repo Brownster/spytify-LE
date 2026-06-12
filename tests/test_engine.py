@@ -459,6 +459,31 @@ def test_engine_stop_flushes_once_and_publishes_status():
     assert statuses == ["stopping", "stopped"]
 
 
+def test_engine_stop_joins_processing_before_flush():
+    events = []
+    engine = RecorderEngine(make_config())
+    manager = FakeManager()
+
+    def shutdown_cleanup():
+        events.append("shutdown_cleanup")
+        manager.shutdown_calls += 1
+
+    class OrderedThread:
+        def is_alive(self):
+            return True
+
+        def join(self, timeout=None):
+            events.append("join_processing")
+
+    manager.shutdown_cleanup = shutdown_cleanup
+    engine.attach_segment_manager(manager, OrderedThread())
+
+    engine.stop()
+
+    assert events == ["join_processing", "shutdown_cleanup"]
+    assert engine.event_queue.get_nowait() == ("shutdown", None)
+
+
 def test_engine_stop_can_skip_flush():
     engine = RecorderEngine(make_config())
     manager = FakeManager()

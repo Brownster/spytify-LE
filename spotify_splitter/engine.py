@@ -433,11 +433,11 @@ class RecorderEngine:
 
             self._publish_status("stopping")
             logging.info("Processing remaining tracks before shutdown...")
-            if flush and self._segment_manager:
-                self._segment_manager.shutdown_cleanup()
             self.event_queue.put(("shutdown", None))
             if self.processing_is_alive():
                 self.wait_processing()
+            if flush and self._segment_manager:
+                self._segment_manager.shutdown_cleanup()
             if self._segment_manager:
                 self._segment_manager.flush_cache()
             self._exit_audio_stream()

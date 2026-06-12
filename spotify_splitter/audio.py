@@ -496,11 +496,9 @@ class EnhancedAudioStream(AudioStream):
                     # Disable advanced features
                     original_adaptive = self.enable_adaptive_management
                     original_monitoring = self.enable_health_monitoring
-                    original_metrics = self.enable_metrics_collection
                     
                     self.enable_adaptive_management = False
                     self.enable_health_monitoring = False
-                    self.enable_metrics_collection = False
                     
                     # Try to restart in basic mode
                     if hasattr(self, 'stream') and self.stream:
@@ -531,7 +529,6 @@ class EnhancedAudioStream(AudioStream):
                             "disabled_features": {
                                 "adaptive_management": original_adaptive,
                                 "health_monitoring": original_monitoring,
-                                "metrics_collection": original_metrics
                             }
                         })
                     

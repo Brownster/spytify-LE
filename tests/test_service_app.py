@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 from pathlib import Path
+import signal
 import subprocess
 
 from spoti2_service.service_app import (
@@ -71,6 +72,7 @@ class ControlledProcess(FakeProcess):
         self.stdin = io.StringIO()
         self.terminated = False
         self.killed = False
+        self.signals = []
 
     def wait(self, timeout=None):
         self.exit_code = 0
@@ -83,6 +85,9 @@ class ControlledProcess(FakeProcess):
     def kill(self):
         self.killed = True
         self.exit_code = 137
+
+    def send_signal(self, signum):
+        self.signals.append(signum)
 
 
 class HangingProcess(ControlledProcess):
@@ -200,6 +205,37 @@ def test_stop_sends_graceful_control_command(tmp_path):
     assert process.terminated is False
     assert process.killed is False
     assert supervisor.status()["state"] == "stopped"
+
+
+def test_start_resumes_paused_process_with_sigcont(tmp_path):
+    supervisor = RecorderSupervisor(status_path=tmp_path / "status.json")
+    process = ControlledProcess()
+    supervisor._process = process
+    supervisor._thread = type("AliveThread", (), {"is_alive": lambda self: True})()
+    supervisor._pause_event.set()
+
+    supervisor.start()
+
+    assert process.signals == [signal.SIGCONT]
+    assert supervisor._pause_event.is_set() is False
+    assert supervisor.status()["state"] == "running"
+
+
+def test_stop_continues_paused_process_before_graceful_stop(tmp_path):
+    supervisor = RecorderSupervisor(
+        status_path=tmp_path / "status.json",
+        graceful_stop_timeout=0.1,
+    )
+    process = ControlledProcess()
+    supervisor._process = process
+    supervisor._pause_event.set()
+
+    supervisor.stop()
+
+    command = json.loads(process.stdin.getvalue().strip())
+    assert process.signals == [signal.SIGCONT]
+    assert command == {"cmd": "stop", "flush": True}
+    assert supervisor.status()["details"] == "⏹️ Recording stopped"
 
 
 def test_stop_falls_back_to_terminate_after_control_timeout(tmp_path):

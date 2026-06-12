@@ -69,7 +69,7 @@ def track_events(
             length = md.get("mpris:length")
             duration_ms = int(length / 1000) if length else 0
             track = TrackInfo(
-                artist=md.get("xesam:artist", ["Unknown"])[0],
+                artist=(md.get("xesam:artist") or ["Unknown"])[0],
                 title=md.get("xesam:title", "Unknown"),
                 album=md.get("xesam:album", "Unknown"),
                 art_uri=md.get("mpris:artUrl"),

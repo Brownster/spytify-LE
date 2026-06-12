@@ -137,8 +137,7 @@ class RecorderSupervisor:
             if self._pause_event.is_set():
                 # Resume from pause
                 logging.info("Resuming recording")
-                self._pause_event.clear()
-                self._set_status("running", "Recording resumed")
+                self.resume()
             else:
                 # Restart if stopped
                 logging.info("Restarting recording")
@@ -180,6 +179,8 @@ class RecorderSupervisor:
         """Stop recording (user-initiated)."""
         logging.info("Stopping RecorderSupervisor (manual stop)")
         self._manual_stop = True
+        if self._pause_event.is_set():
+            self.resume()
         self._pause_event.clear()
         proc = self._process
         if proc and proc.poll() is None and self._request_graceful_stop():
@@ -530,7 +531,10 @@ class RecorderSupervisor:
                     wait_time -= 1
 
         self._terminate_process()
-        self._set_status("stopped", "Supervisor loop exited")
+        with self._status_lock:
+            if self._status.get("state") != "stopped":
+                self._status["state"] = "stopped"
+                self._status["details"] = "Supervisor loop exited"
         logging.debug("Supervisor loop finished")
 
 
