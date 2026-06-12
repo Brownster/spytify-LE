@@ -14,7 +14,6 @@ from spotify_splitter.config_profiles import (
     ProfileManager, ProfileType, SystemCapabilityDetector, 
     SystemCapabilities, ConfigProfile
 )
-from spotify_splitter.buffer_management import BufferStrategy
 
 
 class TestProfileTypes:
@@ -42,44 +41,30 @@ class TestConfigProfile:
         profile = ConfigProfile(
             name="test_profile",
             description="Test profile for unit testing",
-            buffer_strategy=BufferStrategy.BALANCED,
             queue_size=200,
             blocksize=2048,
             latency=0.1,
-            collection_interval=1.0,
-            enable_debug_mode=False,
-            enable_adaptive_management=True,
-            enable_health_monitoring=True,
-            max_reconnection_attempts=5
         )
         
         assert profile.name == "test_profile"
-        assert profile.buffer_strategy == BufferStrategy.BALANCED
         assert profile.queue_size == 200
-        assert profile.enable_adaptive_management is True
+        assert profile.blocksize == 2048
     
     def test_config_profile_to_dict(self):
         """Test converting profile to dictionary."""
         profile = ConfigProfile(
             name="test_profile",
             description="Test profile",
-            buffer_strategy=BufferStrategy.LOW_LATENCY,
             queue_size=150,
             blocksize=1024,
             latency=0.05,
-            collection_interval=0.5,
-            enable_debug_mode=True,
-            enable_adaptive_management=True,
-            enable_health_monitoring=True,
-            max_reconnection_attempts=3
         )
         
         profile_dict = profile.to_dict()
         
         assert profile_dict["name"] == "test_profile"
-        assert profile_dict["buffer_strategy"] == "low_latency"
         assert profile_dict["queue_size"] == 150
-        assert profile_dict["enable_debug_mode"] is True
+        assert profile_dict["latency"] == 0.05
 
 
 class TestSystemCapabilities:
@@ -320,25 +305,20 @@ class TestProfileManager:
         # Test headless profile
         headless = ProfileManager.get_profile(ProfileType.HEADLESS)
         assert headless.name == "headless"
-        assert headless.buffer_strategy == BufferStrategy.CONSERVATIVE
         assert headless.queue_size >= 300
         assert headless.latency >= 0.15
-        assert headless.enable_adaptive_management is True
         
         # Test desktop profile
         desktop = ProfileManager.get_profile(ProfileType.DESKTOP)
         assert desktop.name == "desktop"
-        assert desktop.buffer_strategy == BufferStrategy.BALANCED
         assert 200 <= desktop.queue_size <= 300
         assert 0.08 <= desktop.latency <= 0.12
         
         # Test high-performance profile
         high_perf = ProfileManager.get_profile(ProfileType.HIGH_PERFORMANCE)
         assert high_perf.name == "high_performance"
-        assert high_perf.buffer_strategy == BufferStrategy.LOW_LATENCY
         assert high_perf.queue_size <= 200
         assert high_perf.latency <= 0.06
-        assert high_perf.enable_debug_mode is True
     
     @patch('spotify_splitter.config_profiles.SystemCapabilityDetector.detect_capabilities')
     def test_get_profile_auto_selection(self, mock_detect):
@@ -354,7 +334,6 @@ class TestProfileManager:
         
         # Should return desktop profile for this configuration
         assert "desktop" in profile.name.lower()
-        assert profile.buffer_strategy == BufferStrategy.BALANCED
     
     def test_select_optimal_profile_headless(self):
         """Test optimal profile selection for headless systems."""
@@ -366,7 +345,6 @@ class TestProfileManager:
         profile = ProfileManager.select_optimal_profile(headless_caps)
         
         assert "headless" in profile.name.lower()
-        assert profile.buffer_strategy == BufferStrategy.CONSERVATIVE
     
     def test_select_optimal_profile_high_performance(self):
         """Test optimal profile selection for high-performance systems."""
@@ -378,7 +356,6 @@ class TestProfileManager:
         profile = ProfileManager.select_optimal_profile(high_perf_caps)
         
         assert "high_performance" in profile.name.lower()
-        assert profile.buffer_strategy == BufferStrategy.LOW_LATENCY
     
     def test_select_optimal_profile_desktop(self):
         """Test optimal profile selection for desktop systems."""
@@ -390,7 +367,6 @@ class TestProfileManager:
         profile = ProfileManager.select_optimal_profile(desktop_caps)
         
         assert "desktop" in profile.name.lower()
-        assert profile.buffer_strategy == BufferStrategy.BALANCED
     
     def test_adjust_profile_for_low_memory(self):
         """Test profile adjustment for low memory systems."""
@@ -402,10 +378,8 @@ class TestProfileManager:
         base_profile = ProfileManager.get_profile(ProfileType.DESKTOP)
         adjusted = ProfileManager._adjust_profile_for_system(base_profile, low_memory_caps)
         
-        # Should reduce buffer size and disable debug mode
+        # Should reduce buffer size
         assert adjusted.queue_size < base_profile.queue_size
-        assert adjusted.enable_debug_mode is False
-        assert adjusted.collection_interval >= base_profile.collection_interval
     
     def test_adjust_profile_for_high_memory(self):
         """Test profile adjustment for high memory systems."""
@@ -420,33 +394,6 @@ class TestProfileManager:
         # Should increase buffer size
         assert adjusted.queue_size > base_profile.queue_size
     
-    def test_adjust_profile_for_low_cpu(self):
-        """Test profile adjustment for low CPU systems."""
-        low_cpu_caps = SystemCapabilities(
-            cpu_cores=2, memory_gb=4.0, is_headless=False,
-            audio_backend="pulseaudio", has_gui=True, system_load=0.3
-        )
-        
-        base_profile = ProfileManager.get_profile(ProfileType.DESKTOP)
-        adjusted = ProfileManager._adjust_profile_for_system(base_profile, low_cpu_caps)
-        
-        # Should reduce processing overhead
-        assert adjusted.collection_interval >= base_profile.collection_interval
-        assert adjusted.enable_debug_mode is False
-    
-    def test_adjust_profile_for_high_cpu(self):
-        """Test profile adjustment for high CPU systems."""
-        high_cpu_caps = SystemCapabilities(
-            cpu_cores=16, memory_gb=8.0, is_headless=False,
-            audio_backend="pulseaudio", has_gui=True, system_load=0.2
-        )
-        
-        base_profile = ProfileManager.get_profile(ProfileType.DESKTOP)
-        adjusted = ProfileManager._adjust_profile_for_system(base_profile, high_cpu_caps)
-        
-        # Should enable more frequent monitoring
-        assert adjusted.collection_interval <= base_profile.collection_interval
-    
     def test_adjust_profile_for_high_load(self):
         """Test profile adjustment for high system load."""
         high_load_caps = SystemCapabilities(
@@ -458,10 +405,8 @@ class TestProfileManager:
         adjusted = ProfileManager._adjust_profile_for_system(base_profile, high_load_caps)
         
         # Should use conservative settings
-        assert adjusted.buffer_strategy == BufferStrategy.CONSERVATIVE
         assert adjusted.queue_size >= base_profile.queue_size
         assert adjusted.latency >= base_profile.latency
-        assert adjusted.collection_interval >= base_profile.collection_interval
     
     def test_adjust_profile_for_pipewire(self):
         """Test profile adjustment for PipeWire backend."""
@@ -488,7 +433,6 @@ class TestProfileManager:
         
         # Should use more conservative settings for ALSA
         assert adjusted.latency >= base_profile.latency
-        assert adjusted.buffer_strategy == BufferStrategy.CONSERVATIVE
 
 
 class TestProfileIntegration:
@@ -503,17 +447,11 @@ class TestProfileIntegration:
             assert hasattr(profile, 'queue_size')
             assert hasattr(profile, 'blocksize')
             assert hasattr(profile, 'latency')
-            assert hasattr(profile, 'buffer_strategy')
             
             # Verify settings are reasonable
             assert 50 <= profile.queue_size <= 1000
             assert 512 <= profile.blocksize <= 8192
             assert 0.01 <= profile.latency <= 0.5
-            assert profile.buffer_strategy in [
-                BufferStrategy.CONSERVATIVE, 
-                BufferStrategy.BALANCED, 
-                BufferStrategy.LOW_LATENCY
-            ]
     
     @patch('spotify_splitter.config_profiles.SystemCapabilityDetector.detect_capabilities')
     def test_end_to_end_profile_selection(self, mock_detect):

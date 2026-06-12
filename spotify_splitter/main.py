@@ -15,10 +15,7 @@ from rich.text import Text
 from rich.table import Table
 from click.core import ParameterSource
 
-from .audio import AudioStream, EnhancedAudioStream
-from .buffer_management import AdaptiveBufferManager
-from .buffer_health_monitor import BufferHealthMonitor
-from .error_recovery import ErrorRecoveryManager
+from .audio import AudioStream
 from .config_profiles import ProfileManager, ProfileType
 from .engine import RecorderConfigError, RecorderEngine, RecorderEngineConfig, RecorderError
 from .segmenter import SegmentManager, OUTPUT_DIR
@@ -150,31 +147,6 @@ def record(
         "--profile",
         help="Configuration profile: auto, headless, desktop, high_performance",
     ),
-    enable_adaptive: bool = typer.Option(
-        True,
-        "--adaptive/--no-adaptive",
-        help="Enable adaptive buffer management",
-    ),
-    enable_monitoring: bool = typer.Option(
-        True,
-        "--monitoring/--no-monitoring",
-        help="Enable debug buffer health monitoring when --debug-mode is active",
-    ),
-    debug_mode: bool = typer.Option(
-        False,
-        "--debug-mode",
-        help="Enable debug mode with detailed diagnostics",
-    ),
-    max_buffer_size: int = typer.Option(
-        1000,
-        "--max-buffer-size",
-        help="Maximum buffer size for adaptive management",
-    ),
-    min_buffer_size: int = typer.Option(
-        50,
-        "--min-buffer-size",
-        help="Minimum buffer size for adaptive management",
-    ),
     playlist: str = typer.Option(
         None,
         "--playlist",
@@ -249,11 +221,6 @@ def record(
     blocksize = resolve_param("blocksize", blocksize)
     latency = resolve_param("latency", latency)
     profile = resolve_param("profile", profile)
-    enable_adaptive = resolve_param("enable_adaptive", enable_adaptive)
-    enable_monitoring = resolve_param("enable_monitoring", enable_monitoring)
-    debug_mode = resolve_param("debug_mode", debug_mode)
-    max_buffer_size = resolve_param("max_buffer_size", max_buffer_size)
-    min_buffer_size = resolve_param("min_buffer_size", min_buffer_size)
     playlist = resolve_param("playlist", playlist)
     bundle_playlist = resolve_param("bundle_playlist", bundle_playlist)
     bundle_album_art_uri = resolve_param("bundle_album_art_uri", bundle_album_art_uri)
@@ -323,56 +290,16 @@ def record(
         effective_queue_size = queue_size if queue_size is not None else config_profile.queue_size
         effective_blocksize = blocksize if blocksize is not None else config_profile.blocksize
         effective_latency = latency if latency is not None else config_profile.latency
-        
-        # Override feature flags with CLI arguments
-        effective_adaptive = enable_adaptive and config_profile.enable_adaptive_management
-        effective_debug = debug_mode or config_profile.enable_debug_mode
-        effective_monitoring = (
-            effective_debug
-            and enable_monitoring
-            and config_profile.enable_health_monitoring
-        )
 
-        logging.info(f"Effective settings: queue_size={effective_queue_size}, blocksize={effective_blocksize}, "
-                    f"latency={effective_latency}, adaptive={effective_adaptive}, monitoring={effective_monitoring}")
-        
+        logging.info(f"Effective settings: queue_size={effective_queue_size}, "
+                    f"blocksize={effective_blocksize}, latency={effective_latency}")
+
     except Exception as e:
         logging.error(f"Error configuring profile: {e}")
         # Fall back to safe defaults
         effective_queue_size = queue_size or 200
         effective_blocksize = blocksize or 2048
         effective_latency = latency or 0.1
-        effective_adaptive = enable_adaptive
-        effective_debug = debug_mode
-        effective_monitoring = effective_debug and enable_monitoring
-
-    # Initialize adaptive buffer management components
-    buffer_manager = None
-    health_monitor = None
-    error_recovery = None
-
-    try:
-        if effective_adaptive:
-            buffer_manager = AdaptiveBufferManager(
-                initial_queue_size=effective_queue_size,
-                min_size=min_buffer_size,
-                max_size=max_buffer_size,
-            )
-            logging.info("Adaptive buffer manager initialized")
-
-        if effective_monitoring and buffer_manager:
-            health_monitor = BufferHealthMonitor(buffer_manager=buffer_manager)
-            logging.info("Buffer health monitor initialized")
-
-        error_recovery = ErrorRecoveryManager(
-            max_retries=config_profile.max_reconnection_attempts if 'config_profile' in locals() else 5
-        )
-        logging.info("Error recovery manager initialized")
-
-    except Exception as e:
-        logging.error(f"Error initializing adaptive components: {e}")
-        # Continue with basic functionality
-        pass
 
     # Get allow_overwrite and lastfm_api_key from config
     allow_overwrite = config.get("allow_overwrite", False)
@@ -388,11 +315,6 @@ def record(
             queue_size=effective_queue_size,
             blocksize=effective_blocksize,
             latency=effective_latency,
-            enable_adaptive=effective_adaptive,
-            enable_monitoring=effective_monitoring,
-            debug_mode=effective_debug,
-            min_buffer_size=min_buffer_size,
-            max_buffer_size=max_buffer_size,
             playlist_path=playlist_path,
             bundle_playlist=bundle_playlist,
             bundle_album_art_uri=bundle_album_art_uri,
@@ -412,16 +334,11 @@ def record(
     audio_queue = engine.audio_queue
     event_queue = engine.event_queue
 
-    # Enhanced UI state with adaptive buffer information
     ui_state = {
         "current_track": None,
-        "recording_status": "Initializing adaptive buffer management...",
+        "recording_status": "Initializing...",
         "tracks_recorded": 0,
         "buffer_warnings": 0,
-        "buffer_health": "Unknown",
-        "buffer_utilization": 0.0,
-        "adaptive_adjustments": 0,
-        "emergency_expansions": 0,
         # Timer state
         "timer_enabled": False,
         "timer_duration_seconds": 0,
@@ -506,25 +423,7 @@ def record(
         
         # Stats
         table.add_row("💾 Tracks Recorded:", str(ui_state["tracks_recorded"]))
-        
-        # Buffer information (if debug monitoring is enabled)
-        if effective_monitoring and buffer_manager:
-            health_color = {
-                "HEALTHY": "green",
-                "WARNING": "yellow", 
-                "CRITICAL": "red"
-            }.get(ui_state["buffer_health"], "white")
-            
-            table.add_row("🔧 Buffer Health:", Text(ui_state["buffer_health"], style=health_color))
-            table.add_row("📊 Buffer Usage:", f"{ui_state['buffer_utilization']:.1f}%")
-            table.add_row("⚙️  Queue Size:", str(buffer_manager.current_queue_size))
-            
-            if ui_state["adaptive_adjustments"] > 0:
-                table.add_row("🔄 Adjustments:", str(ui_state["adaptive_adjustments"]))
-            
-            if ui_state["emergency_expansions"] > 0:
-                table.add_row("🚨 Emergency Exp:", str(ui_state["emergency_expansions"]))
-        
+
         if ui_state["buffer_warnings"] > 0:
             table.add_row("⚠️  Buffer Warnings:", str(ui_state["buffer_warnings"]))
 
@@ -551,7 +450,7 @@ def record(
             table.add_row("⏳ Progress:", f"{progress_pct:.1f}% ({format_remaining_time(elapsed)} / {format_remaining_time(total)})")
 
         # Update panel title to indicate timer mode
-        title = "Spotify Splitter (Timed Recording)" if ui_state["timer_enabled"] else "Spotify Splitter (Adaptive)"
+        title = "Spotify Splitter (Timed Recording)" if ui_state["timer_enabled"] else "Spotify Splitter"
         return Panel(table, title=title, border_style="blue")
     
     def enhanced_ui_callback(action, data):
@@ -565,41 +464,7 @@ def record(
         elif action == "buffer_warning":
             ui_state["buffer_warnings"] += 1
             publish_status()
-        elif action == "buffer_health" and isinstance(data, dict):
-            ui_state["buffer_health"] = data.get("status", "Unknown")
-            ui_state["buffer_utilization"] = data.get("utilization", 0.0)
-            publish_status()
-        elif action == "buffer_adjustment":
-            ui_state["adaptive_adjustments"] += 1
-        elif action == "emergency_expansion":
-            ui_state["emergency_expansions"] += 1
-        elif action == "buffer_overflow" and isinstance(data, dict):
-            ui_state["buffer_warnings"] += 1
-            logging.warning(f"Buffer overflow: queue_size={data.get('queue_size')}, max_size={data.get('max_size')}")
-            publish_status()
-        
-        # Enhanced error recovery UI callbacks
-        elif action == "stream_error" and isinstance(data, dict):
-            error_type = data.get("error_type", "Unknown")
-            recovery_action = data.get("recovery_action", "unknown")
-            ui_state["recording_status"] = f"Stream error: {error_type} - attempting {recovery_action}"
-            logging.warning(f"Stream error: {error_type} -> {recovery_action}")
-            publish_status("error", f"{error_type}: {recovery_action}")
-            
-        elif action == "stream_recovery_result" and isinstance(data, dict):
-            success = data.get("success", False)
-            recovery_action = data.get("recovery_action", "unknown")
-            error_type = data.get("error_type", "Unknown")
-            
-            if success:
-                ui_state["recording_status"] = f"Recovery successful: {recovery_action}"
-                logging.info(f"Stream recovery successful: {error_type} -> {recovery_action}")
-                publish_status("recording", None)
-            else:
-                ui_state["recording_status"] = f"Recovery failed: {recovery_action}"
-                logging.error(f"Stream recovery failed: {error_type} -> {recovery_action}")
-                publish_status("error", f"{error_type}: {recovery_action}")
-                
+
         elif action == "processing_error" and isinstance(data, dict):
             track_title = data.get("track", {}).get("title", "Unknown")
             attempt = data.get("attempt", 1)
@@ -612,34 +477,7 @@ def record(
             attempt = data.get("attempt", 1)
             ui_state["recording_status"] = f"Export error: {track_title} (attempt {attempt})"
             publish_status("error", f"{track_title}: export attempt {attempt}")
-            
-        elif action == "recovery_success" and isinstance(data, dict):
-            track = data.get("track")
-            message = data.get("message", "Recovery successful")
-            attempts = data.get("attempts", None)
-            if hasattr(track, 'title'):
-                track_title = track.title
-            elif isinstance(track, dict):
-                track_title = track.get("title", "Unknown")
-            else:
-                track_title = "Unknown"
 
-            if attempts:
-                ui_state["recording_status"] = f"✓ Recovered: {track_title} (after {attempts} attempts)"
-                logging.info(f"Processing recovery successful for {track_title} after {attempts} attempts")
-            else:
-                ui_state["recording_status"] = f"✓ Saved: {track_title}"
-                logging.info(f"{message}: {track_title}")
-            publish_status("recording", None)
-            
-        elif action == "degraded_export" and isinstance(data, dict):
-            track_title = data.get("track", {}).get("title", "Unknown")
-            reason = data.get("reason", "Unknown error")
-            export_type = data.get("type", "processing")
-            ui_state["recording_status"] = f"Degraded {export_type}: {track_title}"
-            logging.warning(f"Degraded export for {track_title}: {reason}")
-            publish_status("recording", f"{track_title}: degraded {export_type}")
-            
         elif action == "processing_failure" and isinstance(data, dict):
             track = data.get("track")
             error_msg = data.get("error", "Processing failed")
@@ -652,32 +490,7 @@ def record(
             ui_state["recording_status"] = f"Failed: {track_title}"
             logging.error(f"Processing failure for {track_title}: {error_msg}")
             publish_status("error", f"{track_title}: {error_msg}")
-            
-        elif action == "degraded_mode" and isinstance(data, dict):
-            reason = data.get("reason", "Unknown")
-            settings = data.get("settings", "Unknown settings")
-            ui_state["recording_status"] = f"Degraded mode: {reason}"
-            logging.warning(f"Entered degraded mode - {reason}: {settings}")
-            publish_status("recording", f"Degraded mode: {reason}")
-            
-        elif action == "feature_degraded" and isinstance(data, dict):
-            feature = data.get("feature", "unknown")
-            reason = data.get("reason", "unknown")
-            logging.warning(f"Feature degraded: {feature} due to {reason}")
-            
-        elif action == "critical_error" and isinstance(data, dict):
-            error_type = data.get("error_type", "Unknown")
-            ui_state["recording_status"] = f"Critical error: {error_type}"
-            logging.critical(f"Critical error escalated: {error_type}")
-            publish_status("error", error_type)
-            
-            # Show recommendations if available
-            recommendations = data.get("recommendations", [])
-            if recommendations:
-                logging.critical("Error recommendations:")
-                for rec in recommendations[:3]:  # Show top 3
-                    logging.critical(f"  - {rec}")
-        
+
     manager = SegmentManager(
         samplerate=info.samplerate,
         output_dir=engine_config.output_dir,
@@ -719,8 +532,6 @@ def record(
     ui_state["current_track"] = None
     ui_state["tracks_recorded"] = 0
     ui_state["buffer_warnings"] = 0
-    ui_state["adaptive_adjustments"] = 0
-    ui_state["emergency_expansions"] = 0
     engine.set_status_publisher(publish_status)
     engine.configure_post_run_cleanup(tag_output=tag_output)
     publish_status("waiting")
@@ -732,26 +543,6 @@ def record(
         ui_state["recording_status"] = "Stop requested - finalizing recording..."
 
     def create_audio_stream():
-        # Choose audio stream implementation based on adaptive management setting
-        if effective_adaptive and buffer_manager:
-            logging.info("Using enhanced audio stream with adaptive management")
-            return EnhancedAudioStream(
-                monitor_name=info.monitor_name,
-                buffer_manager=buffer_manager,
-                error_recovery=error_recovery,
-                health_monitor=health_monitor,
-                samplerate=info.samplerate,
-                channels=info.channels,
-                q=audio_queue,
-                queue_size=effective_queue_size,
-                blocksize=effective_blocksize,
-                latency=effective_latency,
-                ui_callback=enhanced_ui_callback,
-                enable_adaptive_management=effective_adaptive,
-                enable_health_monitoring=effective_monitoring,
-            )
-
-        logging.info("Using basic audio stream")
         return AudioStream(
             info.monitor_name,
             samplerate=info.samplerate,
@@ -781,23 +572,6 @@ def record(
             ui_state["recording_status"] = "Playback paused"
             publish_status("paused")
 
-    def monitor_buffer_health():
-        if effective_monitoring and buffer_manager:
-            while engine.processing_is_alive():
-                try:
-                    metrics = buffer_manager.monitor_utilization(audio_queue)
-                    health = buffer_manager.get_buffer_health(metrics)
-
-                    enhanced_ui_callback("buffer_health", {
-                        "status": health.status.value.upper(),
-                        "utilization": health.utilization * 100
-                    })
-
-                    time.sleep(1.0)  # Update every second
-                except Exception as e:
-                    logging.debug(f"Error in buffer health monitoring: {e}")
-                    time.sleep(2.0)
-
     def run_track_events(on_track_change, on_playback_status):
         track_events(
             on_track_change,
@@ -813,7 +587,6 @@ def record(
         "track_event_runner": run_track_events,
         "on_track_change": on_change,
         "on_playback_status": on_status,
-        "health_monitor_target": monitor_buffer_health if effective_monitoring and buffer_manager else None,
         "control_input_stream": sys.stdin if control_stdin else None,
         "on_control_stop_requested": on_control_stop_requested,
         "heartbeat_interval": STATUS_HEARTBEAT_INTERVAL_SECONDS,

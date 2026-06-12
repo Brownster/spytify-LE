@@ -65,10 +65,7 @@ def merge_web_config(config: Dict[str, Any], form: Dict[str, list]) -> Dict[str,
             value = form[key][0].strip()
             merged[key] = (value or None) if key in nullable_text else (value or merged.get(key))
 
-    bool_fields = [
-        "bundle_playlist", "enable_adaptive", "enable_monitoring",
-        "debug_mode", "allow_overwrite",
-    ]
+    bool_fields = ["bundle_playlist", "allow_overwrite"]
     for key in bool_fields:
         if key in form:
             merged[key] = form[key][-1] not in ("", "0", "off", "false")
@@ -101,13 +98,11 @@ class RecorderSupervisor:
         self,
         config_path: Optional[str] = None,
         auto_restart_delay: float = 15.0,
-        disable_metrics: bool = True,
         status_path: Path = RECORDER_STATUS_PATH,
         graceful_stop_timeout: float = 20.0,
     ) -> None:
         self.config_path = config_path
         self.auto_restart_delay = auto_restart_delay
-        self.disable_metrics = disable_metrics
         self.status_path = status_path
         self.graceful_stop_timeout = graceful_stop_timeout
 
@@ -379,17 +374,6 @@ class RecorderSupervisor:
             cmd.extend(["--config", self.config_path])
 
         record_args: list[str] = []
-        monitoring_enabled = config.get("enable_monitoring")
-        if monitoring_enabled is None:
-            monitoring_enabled = not self.disable_metrics
-
-        if not monitoring_enabled:
-            record_args.append("--no-monitoring")
-
-        if not config.get("enable_adaptive", True):
-            record_args.append("--no-adaptive")
-        if config.get("debug_mode"):
-            record_args.append("--debug-mode")
         if config.get("player") and config.get("player") != DEFAULT_CONFIG["player"]:
             record_args.extend(["--player", config["player"]])
         if config.get("profile") and config.get("profile") != DEFAULT_CONFIG["profile"]:

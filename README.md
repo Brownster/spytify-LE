@@ -190,11 +190,8 @@ spotify-splitter record --profile headless
 # Buffer tuning for lower-end systems
 spotify-splitter record --queue-size 50 --latency 0.1
 
-# Disable performance monitoring
-spotify-splitter record --no-adaptive --no-monitoring
-
-# Debug mode with performance dashboard
-spotify-splitter record --debug-mode
+# Larger callback blocks for stability on busy systems
+spotify-splitter record --blocksize 4096
 ```
 
 ## Web UI Features

@@ -12,9 +12,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "format": "mp3",
     "player": "spotify",
     "profile": "auto",
-    "enable_adaptive": True,
-    "enable_monitoring": True,
-    "debug_mode": False,
     "playlist": None,
     "bundle_playlist": False,
     "bundle_album_art_uri": None,  # Custom album artwork URL for bundle playlists
@@ -23,8 +20,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "queue_size": None,
     "blocksize": None,
     "latency": None,
-    "max_buffer_size": 1000,
-    "min_buffer_size": 50,
     "lastfm_api_key": None,  # LastFM API key for metadata fetching
     "allow_overwrite": False,  # Allow overwriting existing track files
 }

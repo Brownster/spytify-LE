@@ -1,8 +1,8 @@
 """
-Integration tests for main application flow with adaptive buffer management.
+Integration tests for the main application flow.
 
-Tests the integration of adaptive buffer management, configuration profiles,
-system capability detection, and CLI argument handling in the main application.
+Tests configuration profiles, system capability detection, and CLI argument
+handling in the main application.
 """
 
 import pytest
@@ -17,7 +17,6 @@ import os
 
 from spotify_splitter.main import app
 from spotify_splitter.config_profiles import ProfileManager, ProfileType, SystemCapabilityDetector
-from spotify_splitter.buffer_management import AdaptiveBufferManager, BufferStrategy
 from spotify_splitter.engine import TimerSnapshot, TimerTick
 from spotify_splitter.mpris import TrackInfo
 from spotify_splitter.recorder_status import AtomicStatusWriter
@@ -26,7 +25,7 @@ from typer.testing import CliRunner
 
 
 class TestMainIntegration:
-    """Integration tests for main application with adaptive buffer management."""
+    """Integration tests for the main application."""
     
     def setup_method(self):
         """Set up test fixtures."""
@@ -54,67 +53,15 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
-    @patch('spotify_splitter.main.SegmentManager')
-    def test_basic_recording_with_adaptive_management(
-        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream, 
-        mock_track_events, mock_get_stream_info
-    ):
-        """Test basic recording functionality with adaptive management enabled."""
-        # Setup mocks
-        mock_get_stream_info.return_value = self.mock_stream_info
-        
-        mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
-        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
-        mock_stream_instance.__exit__ = Mock(return_value=None)
-        
-        mock_manager_instance = Mock()
-        mock_segment_manager.return_value = mock_manager_instance
-        mock_manager_instance.flush_cache = Mock()
-        mock_manager_instance.run = Mock()
-        mock_manager_instance.shutdown_cleanup = Mock()
-        
-        # Mock track_events to simulate quick exit
-        def mock_track_events_func(*args, **kwargs):
-            time.sleep(0.1)  # Brief simulation
-            raise KeyboardInterrupt()
-        
-        mock_track_events.side_effect = mock_track_events_func
-        
-        # Test with adaptive management enabled (default)
-        result = self.runner.invoke(app, [
-            'record',
-            '--output', self.temp_dir,
-            '--profile', 'desktop',
-            '--adaptive'
-        ])
-        
-        # Verify the command completed
-        assert result.exit_code == 0
-        
-        # Verify enhanced audio stream was used
-        mock_enhanced_stream.assert_called_once()
-        mock_basic_stream.assert_not_called()
-        
-        # Verify segment manager was initialized
-        mock_segment_manager.assert_called_once()
-        
-        # Verify cleanup was called
-        mock_manager_instance.shutdown_cleanup.assert_called_once()
-
-    @patch('spotify_splitter.main.get_spotify_stream_info')
-    @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_status_file_written(
-        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info
+        self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info
     ):
         """Ensure recorder status is written as structured JSON."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -163,13 +110,12 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
-    def test_status_heartbeat_without_adaptive_monitoring(
-        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+    def test_status_heartbeat(
+        self, mock_segment_manager, mock_audio_stream,
         mock_track_events, mock_get_stream_info
     ):
-        """Ensure status heartbeat does not depend on adaptive monitoring."""
+        """Ensure the engine lifecycle loop publishes periodic status heartbeats."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         write_states = []
@@ -180,7 +126,7 @@ class TestMainIntegration:
                 return super().write(status)
 
         mock_stream_instance = Mock()
-        mock_basic_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -197,29 +143,26 @@ class TestMainIntegration:
             result = self.runner.invoke(app, [
                 'record',
                 '--output', self.temp_dir,
-                '--no-adaptive',
                 '--status-file', str(status_file),
             ])
 
         assert result.exit_code == 0
-        assert mock_basic_stream.called
-        assert mock_enhanced_stream.call_count == 0
+        assert mock_audio_stream.called
         assert write_states.count("waiting") >= 2
 
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_control_stdin_stop_flushes(
-        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        self, mock_segment_manager, mock_audio_stream,
         mock_track_events, mock_get_stream_info
     ):
         """Ensure stdin stop control uses the graceful shutdown path."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_basic_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -234,7 +177,6 @@ class TestMainIntegration:
         result = self.runner.invoke(app, [
             'record',
             '--output', self.temp_dir,
-            '--no-adaptive',
             '--control-stdin',
         ], input='{"cmd":"stop","flush":true}\n')
 
@@ -244,17 +186,16 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_normal_processing_exit_flushes_once(
-        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        self, mock_segment_manager, mock_audio_stream,
         mock_track_events, mock_get_stream_info
     ):
         """Ensure normal loop exit finalizes the active recording once."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_basic_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -269,7 +210,6 @@ class TestMainIntegration:
         result = self.runner.invoke(app, [
             'record',
             '--output', self.temp_dir,
-            '--no-adaptive',
         ])
 
         assert result.exit_code == 0
@@ -280,17 +220,16 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_timer_expiry_uses_engine_tick(
-        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
+        self, mock_segment_manager, mock_audio_stream,
         mock_track_events, mock_get_stream_info, mock_start_timer, mock_tick_timer
     ):
         """Ensure timer expiry is driven by the engine timer tick."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_basic_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -323,7 +262,6 @@ class TestMainIntegration:
         result = self.runner.invoke(app, [
             'record',
             '--output', self.temp_dir,
-            '--no-adaptive',
             '--max-duration', '1s',
         ])
 
@@ -335,61 +273,16 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
-    @patch('spotify_splitter.main.SegmentManager')
-    def test_recording_without_adaptive_management(
-        self, mock_segment_manager, mock_enhanced_stream, mock_basic_stream,
-        mock_track_events, mock_get_stream_info
-    ):
-        """Test recording functionality with adaptive management disabled."""
-        # Setup mocks
-        mock_get_stream_info.return_value = self.mock_stream_info
-        
-        mock_stream_instance = Mock()
-        mock_basic_stream.return_value = mock_stream_instance
-        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
-        mock_stream_instance.__exit__ = Mock(return_value=None)
-        
-        mock_manager_instance = Mock()
-        mock_segment_manager.return_value = mock_manager_instance
-        mock_manager_instance.flush_cache = Mock()
-        mock_manager_instance.run = Mock()
-        mock_manager_instance.shutdown_cleanup = Mock()
-        
-        # Mock track_events to simulate quick exit
-        def mock_track_events_func(*args, **kwargs):
-            time.sleep(0.1)
-            raise KeyboardInterrupt()
-        
-        mock_track_events.side_effect = mock_track_events_func
-        
-        # Test with adaptive management disabled
-        result = self.runner.invoke(app, [
-            'record',
-            '--output', self.temp_dir,
-            '--no-adaptive'
-        ])
-        
-        # Verify the command completed
-        assert result.exit_code == 0
-        
-        # Verify basic audio stream was used
-        mock_basic_stream.assert_called_once()
-        mock_enhanced_stream.assert_not_called()
-    
-    @patch('spotify_splitter.main.get_spotify_stream_info')
-    @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_spotifyd_mode_integration(
-        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info
+        self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info
     ):
         """Test spotifyd mode integration with headless profile."""
         # Setup mocks
         mock_get_stream_info.return_value = self.mock_stream_info
         
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
         
@@ -417,8 +310,8 @@ class TestMainIntegration:
         assert result.exit_code == 0
         
         # Verify enhanced stream was called with appropriate settings
-        mock_enhanced_stream.assert_called_once()
-        call_args = mock_enhanced_stream.call_args
+        mock_audio_stream.assert_called_once()
+        call_args = mock_audio_stream.call_args
         
         # Should use headless profile settings (larger queue size, higher latency)
         assert call_args.kwargs['queue_size'] >= 300  # Headless profile uses larger buffers
@@ -426,10 +319,10 @@ class TestMainIntegration:
     @patch('spotify_splitter.config_profiles.SystemCapabilityDetector.detect_capabilities')
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_auto_profile_selection(
-        self, mock_segment_manager, mock_enhanced_stream, mock_track_events,
+        self, mock_segment_manager, mock_audio_stream, mock_track_events,
         mock_get_stream_info, mock_detect_capabilities
     ):
         """Test automatic profile selection based on system capabilities."""
@@ -450,7 +343,7 @@ class TestMainIntegration:
         mock_detect_capabilities.return_value = mock_capabilities
         
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
         
@@ -479,54 +372,12 @@ class TestMainIntegration:
         mock_detect_capabilities.assert_called_once()
         
         # Verify enhanced stream was used with headless profile settings
-        mock_enhanced_stream.assert_called_once()
-        call_args = mock_enhanced_stream.call_args
+        mock_audio_stream.assert_called_once()
+        call_args = mock_audio_stream.call_args
         
         # Headless profile should use conservative settings
         assert call_args.kwargs['queue_size'] >= 300  # Larger buffer for stability
     
-    @patch('spotify_splitter.main.get_spotify_stream_info')
-    @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
-    @patch('spotify_splitter.main.SegmentManager')
-    @patch('spotify_splitter.main.BufferHealthMonitor')
-    def test_monitoring_requires_debug_mode(
-        self, mock_health_monitor, mock_segment_manager,
-        mock_enhanced_stream, mock_track_events, mock_get_stream_info
-    ):
-        """Buffer health monitoring must not start outside debug mode."""
-        mock_get_stream_info.return_value = self.mock_stream_info
-
-        mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
-        mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
-        mock_stream_instance.__exit__ = Mock(return_value=None)
-
-        mock_manager_instance = Mock()
-        mock_segment_manager.return_value = mock_manager_instance
-        mock_manager_instance.flush_cache = Mock()
-        mock_manager_instance.run = Mock()
-        mock_manager_instance.shutdown_cleanup = Mock()
-
-        def mock_track_events_func(*args, **kwargs):
-            time.sleep(0.1)
-            raise KeyboardInterrupt()
-
-        mock_track_events.side_effect = mock_track_events_func
-
-        result = self.runner.invoke(app, [
-            'record',
-            '--profile', 'desktop',
-            '--monitoring',
-            '--output', self.temp_dir
-        ])
-
-        assert result.exit_code == 0
-        mock_health_monitor.assert_not_called()
-        call_args = mock_enhanced_stream.call_args
-        assert call_args.kwargs["health_monitor"] is None
-        assert call_args.kwargs["enable_health_monitoring"] is False
-
     @patch('spotify_splitter.main.get_spotify_stream_info')
     def test_cli_argument_overrides(self, mock_get_stream_info):
         """Test that CLI arguments properly override profile defaults."""
@@ -534,11 +385,11 @@ class TestMainIntegration:
         
         # Test with custom CLI arguments
         with patch('spotify_splitter.main.track_events') as mock_track_events, \
-             patch('spotify_splitter.main.EnhancedAudioStream') as mock_enhanced_stream, \
+             patch('spotify_splitter.main.AudioStream') as mock_audio_stream, \
              patch('spotify_splitter.main.SegmentManager') as mock_segment_manager:
             
             mock_stream_instance = Mock()
-            mock_enhanced_stream.return_value = mock_stream_instance
+            mock_audio_stream.return_value = mock_stream_instance
             mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
             mock_stream_instance.__exit__ = Mock(return_value=None)
             
@@ -567,23 +418,23 @@ class TestMainIntegration:
             assert result.exit_code == 0
             
             # Verify custom settings were used
-            call_args = mock_enhanced_stream.call_args
+            call_args = mock_audio_stream.call_args
             assert call_args.kwargs['queue_size'] == 500
             assert call_args.kwargs['latency'] == 0.05
             assert call_args.kwargs['blocksize'] == 1024
 
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_playlist_option(
-        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info
+        self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info
     ):
         """Ensure playlist path is passed to SegmentManager."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -613,16 +464,16 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.tag_output')
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_tagger_called_on_shutdown(
-        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info, mock_tag_output
+        self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info, mock_tag_output
     ):
         """Ensure tagging API is invoked when recording stops."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -649,16 +500,16 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.tag_output')
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_tagger_called_with_playlist(
-        self, mock_segment_manager, mock_enhanced_stream, mock_track_events, mock_get_stream_info, mock_tag_output
+        self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info, mock_tag_output
     ):
         """Ensure tagging API receives playlist when playlist option is used."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -731,16 +582,16 @@ class TestMainIntegration:
         assert "D-Bus error" in result.output
 
     @patch('spotify_splitter.main.get_spotify_stream_info')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_engine_start_error_maps_to_clean_exit(
-        self, mock_segment_manager, mock_enhanced_stream, mock_get_stream_info
+        self, mock_segment_manager, mock_audio_stream, mock_get_stream_info
     ):
         """Test startup errors from the engine are mapped to a clean CLI exit."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(side_effect=RuntimeError("audio device busy"))
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -760,12 +611,12 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.Live')
     @patch('spotify_splitter.main.RecorderEngine.run')
     @patch('spotify_splitter.main.get_spotify_stream_info')
-    @patch('spotify_splitter.main.EnhancedAudioStream')
+    @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
     def test_service_env_uses_headless_engine_run(
         self,
         mock_segment_manager,
-        mock_enhanced_stream,
+        mock_audio_stream,
         mock_get_stream_info,
         mock_engine_run,
         mock_live,
@@ -775,7 +626,7 @@ class TestMainIntegration:
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
-        mock_enhanced_stream.return_value = mock_stream_instance
+        mock_audio_stream.return_value = mock_stream_instance
         mock_stream_instance.__enter__ = Mock(return_value=mock_stream_instance)
         mock_stream_instance.__exit__ = Mock(return_value=None)
 
@@ -801,16 +652,14 @@ class TestConfigurationProfiles:
         # Test getting specific profiles
         headless_profile = ProfileManager.get_profile(ProfileType.HEADLESS)
         assert headless_profile.name == "headless"
-        assert headless_profile.buffer_strategy == BufferStrategy.CONSERVATIVE
         assert headless_profile.queue_size >= 300
         
         desktop_profile = ProfileManager.get_profile(ProfileType.DESKTOP)
         assert desktop_profile.name == "desktop"
-        assert desktop_profile.buffer_strategy == BufferStrategy.BALANCED
         
         high_perf_profile = ProfileManager.get_profile(ProfileType.HIGH_PERFORMANCE)
         assert high_perf_profile.name == "high_performance"
-        assert high_perf_profile.buffer_strategy == BufferStrategy.LOW_LATENCY
+        assert high_perf_profile.latency <= desktop_profile.latency
     
     @patch('spotify_splitter.config_profiles.SystemCapabilityDetector.detect_capabilities')
     def test_auto_profile_selection_logic(self, mock_detect):
@@ -862,7 +711,6 @@ class TestConfigurationProfiles:
         
         # Should reduce buffer size for low memory
         assert adjusted_profile.queue_size < base_profile.queue_size
-        assert not adjusted_profile.enable_debug_mode
         
         # Test high memory adjustment
         high_memory_caps = SystemCapabilities(

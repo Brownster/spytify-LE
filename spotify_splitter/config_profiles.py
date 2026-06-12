@@ -14,8 +14,6 @@ from enum import Enum
 from typing import Dict, Any, Optional
 import subprocess
 
-from .buffer_management import BufferStrategy
-
 logger = logging.getLogger(__name__)
 
 
@@ -47,33 +45,21 @@ class SystemCapabilities:
 
 @dataclass
 class ConfigProfile:
-    """Configuration profile with optimized settings."""
+    """PortAudio capture settings tuned for a usage scenario."""
     name: str
     description: str
-    buffer_strategy: BufferStrategy
     queue_size: int
     blocksize: int
     latency: float
-    collection_interval: float
-    enable_debug_mode: bool
-    enable_adaptive_management: bool
-    enable_health_monitoring: bool
-    max_reconnection_attempts: int
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert profile to dictionary."""
         return {
             'name': self.name,
             'description': self.description,
-            'buffer_strategy': self.buffer_strategy.value,
             'queue_size': self.queue_size,
             'blocksize': self.blocksize,
             'latency': self.latency,
-            'collection_interval': self.collection_interval,
-            'enable_debug_mode': self.enable_debug_mode,
-            'enable_adaptive_management': self.enable_adaptive_management,
-            'enable_health_monitoring': self.enable_health_monitoring,
-            'max_reconnection_attempts': self.max_reconnection_attempts
         }
 
 
@@ -189,43 +175,25 @@ class ProfileManager:
         ProfileType.HEADLESS: ConfigProfile(
             name="headless",
             description="Optimized for spotifyd and headless operation with stability focus",
-            buffer_strategy=BufferStrategy.CONSERVATIVE,
             queue_size=400,
             blocksize=4096,
             latency=0.2,  # 200ms for stability
-            collection_interval=2.0,
-            enable_debug_mode=False,
-            enable_adaptive_management=True,
-            enable_health_monitoring=True,
-            max_reconnection_attempts=10
         ),
-        
+
         ProfileType.DESKTOP: ConfigProfile(
             name="desktop",
             description="Balanced settings for desktop use with GUI feedback",
-            buffer_strategy=BufferStrategy.BALANCED,
             queue_size=250,
             blocksize=2048,
             latency=0.1,  # 100ms balanced
-            collection_interval=1.0,
-            enable_debug_mode=False,
-            enable_adaptive_management=True,
-            enable_health_monitoring=True,
-            max_reconnection_attempts=5
         ),
-        
+
         ProfileType.HIGH_PERFORMANCE: ConfigProfile(
             name="high_performance",
             description="Minimal latency for high-performance systems",
-            buffer_strategy=BufferStrategy.LOW_LATENCY,
             queue_size=150,
             blocksize=1024,
             latency=0.05,  # 50ms minimal
-            collection_interval=0.5,
-            enable_debug_mode=True,
-            enable_adaptive_management=True,
-            enable_health_monitoring=True,
-            max_reconnection_attempts=3
         )
     }
     
@@ -306,61 +274,37 @@ class ProfileManager:
         adjusted = ConfigProfile(
             name=f"{base_profile.name}_adjusted",
             description=f"{base_profile.description} (system-adjusted)",
-            buffer_strategy=base_profile.buffer_strategy,
             queue_size=base_profile.queue_size,
             blocksize=base_profile.blocksize,
             latency=base_profile.latency,
-            collection_interval=base_profile.collection_interval,
-            enable_debug_mode=base_profile.enable_debug_mode,
-            enable_adaptive_management=base_profile.enable_adaptive_management,
-            enable_health_monitoring=base_profile.enable_health_monitoring,
-            max_reconnection_attempts=base_profile.max_reconnection_attempts
         )
-        
+
         # Adjust based on memory constraints
         if capabilities.memory_gb < 2.0:
-            # Low memory - reduce buffer sizes and disable some features
             adjusted.queue_size = max(100, int(adjusted.queue_size * 0.7))
-            adjusted.enable_debug_mode = False
-            adjusted.collection_interval = min(2.0, adjusted.collection_interval * 1.5)
             logger.info("Adjusted profile for low memory system")
-            
+
         elif capabilities.memory_gb > 8.0:
             # High memory - can afford larger buffers
             adjusted.queue_size = min(600, int(adjusted.queue_size * 1.3))
             logger.info("Adjusted profile for high memory system")
-        
-        # Adjust based on CPU constraints
-        if capabilities.cpu_cores <= 2:
-            # Low CPU - reduce processing overhead
-            adjusted.collection_interval = max(1.0, adjusted.collection_interval * 1.5)
-            adjusted.enable_debug_mode = False
-            logger.info("Adjusted profile for low CPU system")
-            
-        elif capabilities.cpu_cores >= 8:
-            # High CPU - can handle more frequent monitoring
-            adjusted.collection_interval = max(0.5, adjusted.collection_interval * 0.8)
-            logger.info("Adjusted profile for high CPU system")
-        
+
         # Adjust based on current system load
         if capabilities.system_load > 0.8:
             # High load - conservative settings
-            adjusted.buffer_strategy = BufferStrategy.CONSERVATIVE
             adjusted.queue_size = min(500, int(adjusted.queue_size * 1.2))
             adjusted.latency = max(0.1, adjusted.latency * 1.2)
-            adjusted.collection_interval = max(1.0, adjusted.collection_interval * 1.5)
             logger.info("Adjusted profile for high system load")
-        
+
         # Adjust based on audio backend
         if capabilities.audio_backend == "pipewire":
             # PipeWire can handle lower latencies better
             adjusted.latency = max(0.05, adjusted.latency * 0.8)
             logger.info("Adjusted profile for PipeWire backend")
-            
+
         elif capabilities.audio_backend == "alsa":
             # ALSA might need more conservative settings
             adjusted.latency = max(0.1, adjusted.latency * 1.2)
-            adjusted.buffer_strategy = BufferStrategy.CONSERVATIVE
             logger.info("Adjusted profile for ALSA backend")
-        
+
         return adjusted

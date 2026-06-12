@@ -418,23 +418,6 @@ def render_index(
               </select>
               <div class="help-text">Optimize for your system</div>
             </label>
-            <div class="checkbox-group" style="margin-top:1rem;">
-              <label>
-                <input type="hidden" name="enable_adaptive" value="0">
-                <input type="checkbox" name="enable_adaptive" value="on" {checked(config.get("enable_adaptive", True))}>
-                <span>Adaptive Buffers</span>
-              </label>
-              <label>
-                <input type="hidden" name="enable_monitoring" value="0">
-                <input type="checkbox" name="enable_monitoring" value="on" {checked(config.get("enable_monitoring", False))}>
-                <span>Buffer Monitoring (debug)</span>
-              </label>
-              <label>
-                <input type="hidden" name="debug_mode" value="0">
-                <input type="checkbox" name="debug_mode" value="on" {checked(config.get("debug_mode", False))}>
-                <span>Debug Mode</span>
-              </label>
-            </div>
 
             <h2 style="margin-top:2rem;">Player</h2>
             <label>

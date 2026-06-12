@@ -23,14 +23,12 @@ def test_merge_web_config_partial_form_preserves_other_fields():
         "format": "flac",
         "lastfm_api_key": "KEY123",
         "allow_overwrite": True,
-        "enable_adaptive": True,
         "playlist": "/p.m3u",
     }
     merged = merge_web_config(config, {"max_duration": ["90m"]})
     assert merged["max_duration"] == "90m"
     assert merged["lastfm_api_key"] == "KEY123"
     assert merged["allow_overwrite"] is True
-    assert merged["enable_adaptive"] is True
     assert merged["format"] == "flac"
     assert merged["playlist"] == "/p.m3u"
 
@@ -38,10 +36,10 @@ def test_merge_web_config_partial_form_preserves_other_fields():
 def test_merge_web_config_checkbox_toggle():
     """Hidden-companion checkboxes toggle off; omitted booleans are preserved."""
     off = merge_web_config(
-        {"allow_overwrite": True, "enable_monitoring": True}, {"allow_overwrite": ["0"]}
+        {"allow_overwrite": True, "bundle_playlist": True}, {"allow_overwrite": ["0"]}
     )
     assert off["allow_overwrite"] is False
-    assert off["enable_monitoring"] is True  # not in this form -> preserved
+    assert off["bundle_playlist"] is True  # not in this form -> preserved
     on = merge_web_config({"allow_overwrite": False}, {"allow_overwrite": ["0", "on"]})
     assert on["allow_overwrite"] is True
 

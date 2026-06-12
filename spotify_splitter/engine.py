@@ -98,11 +98,6 @@ class RecorderEngineConfig:
     queue_size: int
     blocksize: int
     latency: float
-    enable_adaptive: bool
-    enable_monitoring: bool
-    debug_mode: bool
-    min_buffer_size: int
-    max_buffer_size: int
     playlist_path: Optional[Path] = None
     bundle_playlist: bool = False
     bundle_album_art_uri: Optional[str] = None
@@ -121,10 +116,6 @@ class RecorderEngineConfig:
             raise RecorderConfigError("blocksize must be positive")
         if self.latency <= 0:
             raise RecorderConfigError("latency must be positive")
-        if self.min_buffer_size <= 0:
-            raise RecorderConfigError("min_buffer_size must be positive")
-        if self.max_buffer_size < self.min_buffer_size:
-            raise RecorderConfigError("max_buffer_size must be greater than or equal to min_buffer_size")
         if self.bundle_playlist and not self.playlist_path:
             raise RecorderConfigError("bundle_playlist requires playlist_path")
 
@@ -151,7 +142,6 @@ class RecorderEngine:
         self._segment_manager: Optional[SegmentManagerLike] = None
         self._processing_thread: Optional[threading.Thread] = None
         self._mpris_thread: Optional[threading.Thread] = None
-        self._health_thread: Optional[threading.Thread] = None
         self._control_thread: Optional[threading.Thread] = None
         self._lifecycle_thread: Optional[threading.Thread] = None
         self._audio_stream: Optional[AudioStreamLike] = None
@@ -206,7 +196,6 @@ class RecorderEngine:
         track_event_runner: Optional[TrackEventRunner] = None,
         on_track_change: Optional[Callable[[object], None]] = None,
         on_playback_status: Optional[Callable[[str], None]] = None,
-        health_monitor_target: Optional[ThreadTarget] = None,
         control_input_stream: Optional[Iterable[str]] = None,
         on_control_stop_requested: Optional[ControlStopCallback] = None,
         heartbeat_interval: float = 0.0,
@@ -226,10 +215,6 @@ class RecorderEngine:
 
             self.create_processing_thread(manager, processing_target)
             self.start_processing()
-
-            if health_monitor_target:
-                self._health_thread = threading.Thread(target=health_monitor_target, daemon=True)
-                self._health_thread.start()
 
             if track_event_runner:
                 self._mpris_thread = threading.Thread(

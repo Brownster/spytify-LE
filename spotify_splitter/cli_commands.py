@@ -144,7 +144,6 @@ def profiles():
     profiles_table = Table()
     profiles_table.add_column("Profile", style="cyan", no_wrap=True)
     profiles_table.add_column("Description", style="white")
-    profiles_table.add_column("Buffer Strategy", style="yellow")
     profiles_table.add_column("Queue Size", style="green")
     profiles_table.add_column("Latency", style="magenta")
 
@@ -157,7 +156,6 @@ def profiles():
             profiles_table.add_row(
                 profile.name,
                 profile.description,
-                profile.buffer_strategy.value,
                 str(profile.queue_size),
                 f"{profile.latency*1000:.0f}ms"
             )
@@ -165,14 +163,13 @@ def profiles():
             profiles_table.add_row(
                 profile_type.value,
                 f"Error loading profile: {e}",
-                "-", "-", "-"
+                "-", "-"
             )
 
     # Add auto profile
     profiles_table.add_row(
         "auto",
         "Automatically select optimal profile based on system capabilities",
-        "varies",
         "varies",
         "varies"
     )
@@ -181,8 +178,8 @@ def profiles():
 
     console.print("\n[bold cyan]Usage Examples[/bold cyan]")
     console.print("  spotify-splitter record --profile headless")
-    console.print("  spotify-splitter record --profile desktop --adaptive")
-    console.print("  spotify-splitter record --profile high_performance --debug-mode")
+    console.print("  spotify-splitter record --profile desktop")
+    console.print("  spotify-splitter record --profile high_performance")
 
 
 def configure(
@@ -214,21 +211,6 @@ def configure(
         None,
         "--profile",
         help="Default configuration profile to apply",
-    ),
-    enable_adaptive: Optional[bool] = typer.Option(
-        None,
-        "--adaptive/--no-adaptive",
-        help="Toggle adaptive buffer management by default",
-    ),
-    enable_monitoring: Optional[bool] = typer.Option(
-        None,
-        "--monitoring/--no-monitoring",
-        help="Toggle buffer health monitoring by default",
-    ),
-    debug_mode: Optional[bool] = typer.Option(
-        None,
-        "--debug/--no-debug",
-        help="Toggle debug dashboard by default",
     ),
     playlist: Optional[str] = typer.Option(
         None,
@@ -327,22 +309,6 @@ def configure(
     )
     updates["profile"] = profile_value or existing.get("profile") or DEFAULT_CONFIG["profile"]
 
-    updates["enable_adaptive"] = prompt_bool(
-        "enable_adaptive",
-        enable_adaptive,
-        "Enable adaptive buffer management by default?",
-    )
-    updates["enable_monitoring"] = prompt_bool(
-        "enable_monitoring",
-        enable_monitoring,
-        "Enable buffer health monitoring by default?",
-    )
-    updates["debug_mode"] = prompt_bool(
-        "debug_mode",
-        debug_mode,
-        "Enable debug dashboard by default?",
-    )
-
     playlist_value = prompt_text(
         "playlist",
         playlist,
@@ -377,9 +343,6 @@ def configure(
         "format",
         "player",
         "profile",
-        "enable_adaptive",
-        "enable_monitoring",
-        "debug_mode",
         "playlist",
         "bundle_playlist",
         "lastfm_api_key",

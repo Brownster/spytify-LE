@@ -1,8 +1,8 @@
 """
-End-to-end tests for comprehensive error handling and recovery scenarios.
+End-to-end tests for segment processing and export failure handling.
 
-This module tests the integration of ErrorRecoveryManager with AudioStream and SegmentManager,
-including progressive error escalation, graceful degradation, and user notifications.
+Covers the single recovery policy that survived Pass 3: segment preparation
+failures are reported once and skipped, exports retry only transient I/O errors.
 """
 
 import pytest
@@ -15,15 +15,12 @@ import tempfile
 import shutil
 from pydub import AudioSegment
 
-from spotify_splitter.error_recovery import ErrorRecoveryManager, RecoveryAction
-from spotify_splitter.audio import EnhancedAudioStream
 from spotify_splitter.segmenter import SegmentManager, TrackMarker
 from spotify_splitter.mpris import TrackInfo
-from spotify_splitter.buffer_management import AdaptiveBufferManager
 
 
-class TestErrorRecoveryIntegration:
-    """Test comprehensive error recovery integration."""
+class TestSegmentFailureHandling:
+    """Test segment-processing and export failure handling."""
     
     @pytest.fixture
     def temp_output_dir(self):
@@ -44,15 +41,6 @@ class TestErrorRecoveryIntegration:
             track_number=1,
             position=0,
             duration_ms=3000  # 3 seconds to match test audio
-        )
-    
-    @pytest.fixture
-    def error_recovery_manager(self):
-        """Create error recovery manager for testing."""
-        return ErrorRecoveryManager(
-            max_retries=3,
-            backoff_factor=1.2,
-            max_backoff=5.0
         )
     
     @pytest.fixture
@@ -205,102 +193,6 @@ class TestErrorRecoveryIntegration:
         assert export_error_calls[0][1]["will_retry"] is False
         assert len(failure_calls) == 1
     
-    def test_audio_stream_error_recovery(self, error_recovery_manager, ui_callback_mock):
-        """Test error recovery in EnhancedAudioStream."""
-        buffer_manager = AdaptiveBufferManager()
-        
-        # Create enhanced audio stream with mocked sounddevice
-        with patch('spotify_splitter.audio.sd') as mock_sd:
-            mock_stream = Mock()
-            mock_sd.InputStream.return_value = mock_stream
-            
-            stream = EnhancedAudioStream(
-                monitor_name="test_monitor",
-                buffer_manager=buffer_manager,
-                error_recovery=error_recovery_manager,
-                ui_callback=ui_callback_mock,
-                enable_error_recovery=True
-            )
-            
-            # Test stream error handling with an OSError that should trigger reconnection
-            test_error = OSError("PortAudioError: Device not found")
-            
-            with patch.object(stream, '_attempt_reconnection', return_value=True) as mock_reconnect:
-                success = stream.handle_stream_error(test_error)
-                
-                assert success, "Stream error recovery should succeed"
-                mock_reconnect.assert_called_once()
-                
-                # Verify UI callbacks for stream error and recovery
-                ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
-                stream_error_calls = [call for call in ui_callback_calls if call[0] == "stream_error"]
-                recovery_result_calls = [call for call in ui_callback_calls if call[0] == "stream_recovery_result"]
-                
-                assert len(stream_error_calls) >= 1, "Should have called UI with stream error"
-                assert len(recovery_result_calls) >= 1, "Should have called UI with recovery result"
-    
-    def test_audio_stream_graceful_degradation(self, error_recovery_manager, ui_callback_mock):
-        """Test graceful degradation in EnhancedAudioStream."""
-        buffer_manager = AdaptiveBufferManager()
-        
-        with patch('spotify_splitter.audio.sd') as mock_sd:
-            mock_stream = Mock()
-            mock_sd.InputStream.return_value = mock_stream
-            
-            stream = EnhancedAudioStream(
-                monitor_name="test_monitor",
-                buffer_manager=buffer_manager,
-                error_recovery=error_recovery_manager,
-                ui_callback=ui_callback_mock,
-                enable_error_recovery=True
-            )
-            
-            # Test graceful degradation for memory error
-            memory_error = MemoryError("Simulated memory error")
-            
-            with patch.object(stream, 'stream') as mock_stream_obj:
-                success = stream._attempt_graceful_degradation(memory_error)
-                
-                assert success, "Graceful degradation should succeed"
-                
-                # Verify UI callback for degraded mode
-                ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
-                degraded_mode_calls = [call for call in ui_callback_calls if call[0] == "degraded_mode"]
-                
-                assert len(degraded_mode_calls) >= 1, "Should have called UI with degraded mode notification"
-    
-    def test_error_escalation_with_recommendations(self, error_recovery_manager, ui_callback_mock):
-        """Test error escalation with user-actionable recommendations."""
-        buffer_manager = AdaptiveBufferManager()
-        
-        with patch('spotify_splitter.audio.sd') as mock_sd:
-            mock_stream = Mock()
-            mock_sd.InputStream.return_value = mock_stream
-            
-            stream = EnhancedAudioStream(
-                monitor_name="test_monitor",
-                buffer_manager=buffer_manager,
-                error_recovery=error_recovery_manager,
-                ui_callback=ui_callback_mock,
-                enable_error_recovery=True
-            )
-            
-            # Test critical error escalation
-            critical_error = Exception("PortAudioError: Device not found")
-            
-            stream._escalate_stream_error(critical_error, "test_context")
-            
-            # Verify UI callback for critical error with recommendations
-            ui_callback_calls = [call.args for call in ui_callback_mock.call_args_list]
-            critical_error_calls = [call for call in ui_callback_calls if call[0] == "critical_error"]
-            
-            assert len(critical_error_calls) >= 1, "Should have called UI with critical error"
-            
-            # Check that recommendations were provided
-            critical_call_data = critical_error_calls[0][1]
-            assert "recommendations" in critical_call_data
-            assert len(critical_call_data["recommendations"]) > 0
-    
     def test_end_to_end_error_recovery_scenario(self, segment_manager, mock_track_info, 
                                                ui_callback_mock, audio_queue, event_queue):
         """Test complete end-to-end error recovery scenario."""
@@ -444,98 +336,6 @@ class TestErrorRecoveryIntegration:
         # Verify no race conditions in UI callbacks
         ui_callback_calls = ui_callback_mock.call_args_list
         assert len(ui_callback_calls) > 0, "Should have UI callback calls from concurrent processing"
-
-
-class TestErrorRecoveryManagerStandalone:
-    """Test ErrorRecoveryManager functionality in isolation."""
-    
-    @pytest.fixture
-    def error_recovery(self):
-        """Create error recovery manager for testing."""
-        return ErrorRecoveryManager(max_retries=3, backoff_factor=1.5)
-    
-    def test_error_classification(self, error_recovery):
-        """Test error severity classification."""
-        # Test critical errors
-        critical_error = MemoryError("Out of memory")
-        action = error_recovery.handle_error(critical_error, "test")
-        assert action in [RecoveryAction.ESCALATE, RecoveryAction.GRACEFUL_DEGRADE]
-        
-        # Test high severity errors - use a more specific error type
-        high_error = OSError("PortAudioError: Device unavailable")
-        action = error_recovery.handle_error(high_error, "test")
-        assert action == RecoveryAction.RECONNECT
-        
-        # Test medium severity errors
-        medium_error = IOError("File not found")
-        action = error_recovery.handle_error(medium_error, "test")
-        assert action in [RecoveryAction.RETRY, RecoveryAction.RECONNECT]
-    
-    def test_recovery_attempt_with_backoff(self, error_recovery):
-        """Test recovery attempts with exponential backoff."""
-        # Test multiple recovery attempts to see backoff behavior
-        call_times = []
-        
-        def mock_recovery_func():
-            call_times.append(time.time())
-            return True  # Always succeed
-        
-        # First attempt - should have no delay
-        start_time = time.time()
-        success1 = error_recovery.attempt_recovery(
-            RecoveryAction.RETRY,
-            mock_recovery_func,
-            "test_recovery_1"
-        )
-        
-        # Second attempt - should have backoff delay
-        success2 = error_recovery.attempt_recovery(
-            RecoveryAction.RETRY,
-            mock_recovery_func,
-            "test_recovery_2"
-        )
-        
-        assert success1, "First recovery should succeed"
-        assert success2, "Second recovery should succeed"
-        assert len(call_times) == 2, "Should make 2 recovery function calls"
-        
-        # Verify backoff delay was applied between attempts
-        if len(call_times) >= 2:
-            delay = call_times[1] - call_times[0]
-            # The delay should be at least the backoff time (1.5^1 = 1.5 seconds)
-            assert delay >= 1.0, f"Should have backoff delay between attempts, got {delay:.2f}s"
-    
-    def test_error_frequency_escalation(self, error_recovery):
-        """Test escalation when same error occurs frequently."""
-        # Generate multiple same errors quickly
-        for _ in range(5):
-            action = error_recovery.handle_error(ValueError("Frequent error"), "test")
-        
-        # Should escalate after frequent occurrences
-        final_action = error_recovery.handle_error(ValueError("Frequent error"), "test")
-        assert final_action == RecoveryAction.ESCALATE
-    
-    def test_diagnostics_generation(self, error_recovery):
-        """Test comprehensive diagnostics generation."""
-        # Generate various errors
-        errors = [
-            ValueError("Error 1"),
-            IOError("Error 2"),
-            RuntimeError("Error 3"),
-            ValueError("Error 1"),  # Repeat for frequency testing
-        ]
-        
-        for error in errors:
-            error_recovery.handle_error(error, "test")
-        
-        # Generate diagnostics
-        diagnostics = error_recovery.get_diagnostics()
-        
-        assert diagnostics.total_errors == 4
-        assert len(diagnostics.most_common_errors) > 0
-        assert diagnostics.most_common_errors[0][0] == "ValueError"  # Most common
-        assert diagnostics.most_common_errors[0][1] == 2  # Occurred twice
-        assert len(diagnostics.recommendations) > 0
 
 
 if __name__ == "__main__":
