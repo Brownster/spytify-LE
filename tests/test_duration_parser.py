@@ -4,7 +4,6 @@ import pytest
 from spotify_splitter.duration_parser import (
     parse_duration,
     format_remaining_time,
-    validate_duration_format,
 )
 
 
@@ -157,31 +156,6 @@ class TestFormatRemainingTime:
         """Test formatting large durations."""
         assert format_remaining_time(86400) == "24h"  # 1 day
         assert format_remaining_time(90061) == "25h 1m 1s"
-
-
-class TestValidateDurationFormat:
-    """Test cases for validate_duration_format function."""
-
-    def test_valid_formats(self):
-        """Test that valid formats return (True, '')."""
-        assert validate_duration_format("4h29m") == (True, "")
-        assert validate_duration_format("90m") == (True, "")
-        assert validate_duration_format("5400s") == (True, "")
-        assert validate_duration_format("1h30m45s") == (True, "")
-
-    def test_invalid_formats(self):
-        """Test that invalid formats return (False, error_message)."""
-        is_valid, error = validate_duration_format("invalid")
-        assert is_valid is False
-        assert "Invalid duration format" in error
-
-        is_valid, error = validate_duration_format("")
-        assert is_valid is False
-        assert "cannot be empty" in error
-
-        is_valid, error = validate_duration_format("0h0m0s")
-        assert is_valid is False
-        assert "must be positive" in error
 
 
 @pytest.mark.parametrize(

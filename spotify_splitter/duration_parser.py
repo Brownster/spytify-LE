@@ -1,7 +1,6 @@
 """Duration parsing and formatting utilities for recording timer feature."""
 
 import re
-from typing import Tuple
 
 
 def parse_duration(duration_str: str) -> int:
@@ -97,21 +96,3 @@ def format_remaining_time(seconds: int) -> str:
         parts.append(f"{secs}s")
 
     return " ".join(parts)
-
-
-def validate_duration_format(duration_str: str) -> Tuple[bool, str]:
-    """
-    Validate duration string format without parsing.
-
-    Args:
-        duration_str: Duration string to validate
-
-    Returns:
-        Tuple of (is_valid, error_message)
-        If valid, error_message will be empty string
-    """
-    try:
-        parse_duration(duration_str)
-        return (True, "")
-    except ValueError as e:
-        return (False, str(e))

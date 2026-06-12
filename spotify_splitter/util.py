@@ -203,8 +203,3 @@ def stream_info_for_source(source_name: str) -> StreamInfo:
         "Using explicit capture source: %s (%d Hz, %d ch)", source_name, rate, channels
     )
     return StreamInfo(source_name, rate, channels)
-
-
-def find_spotify_monitor() -> str:
-    """Backward-compatible wrapper returning only the monitor name."""
-    return get_spotify_stream_info().monitor_name

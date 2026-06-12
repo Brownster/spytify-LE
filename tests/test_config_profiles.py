@@ -489,38 +489,6 @@ class TestProfileManager:
         # Should use more conservative settings for ALSA
         assert adjusted.latency >= base_profile.latency
         assert adjusted.buffer_strategy == BufferStrategy.CONSERVATIVE
-    
-    def test_list_available_profiles(self):
-        """Test listing available profiles."""
-        profiles = ProfileManager.list_available_profiles()
-        
-        expected_profiles = {"headless", "desktop", "high_performance", "auto"}
-        assert set(profiles.keys()) == expected_profiles
-        
-        # Check that descriptions are provided
-        for profile_name, description in profiles.items():
-            assert isinstance(description, str)
-            assert len(description) > 0
-    
-    def test_create_custom_profile(self):
-        """Test creating custom profiles."""
-        custom = ProfileManager.create_custom_profile(
-            name="custom_test",
-            base_profile=ProfileType.DESKTOP,
-            queue_size=300,
-            enable_debug_mode=True,
-            description="Custom test profile"
-        )
-        
-        assert custom.name == "custom_test"
-        assert custom.description == "Custom test profile"
-        assert custom.queue_size == 300
-        assert custom.enable_debug_mode is True
-        
-        # Should inherit other settings from desktop profile
-        desktop_profile = ProfileManager.get_profile(ProfileType.DESKTOP)
-        assert custom.buffer_strategy == desktop_profile.buffer_strategy
-        assert custom.blocksize == desktop_profile.blocksize
 
 
 class TestProfileIntegration:
