@@ -8,9 +8,8 @@ from typing import Optional, Callable
 import logging
 import time
 import threading
-from datetime import datetime
 
-from .buffer_management import AdaptiveBufferManager, BufferHealth, HealthStatus
+from .buffer_management import AdaptiveBufferManager, BufferHealth
 from .buffer_health_monitor import BufferHealthMonitor
 from .error_recovery import ErrorRecoveryManager, RecoveryAction
 
@@ -693,47 +692,6 @@ class EnhancedAudioStream(AudioStream):
             base_metrics.update({'health_monitoring': health_stats})
         
         return base_metrics
-    
-    def _get_metrics_data(self) -> dict:
-        """
-        Get current metrics data for the metrics collector.
-        
-        Returns:
-            Dictionary of current metric values for collection
-        """
-        with self._lock:
-            current_metrics = self.metrics.copy()
-        
-        # Add real-time queue information
-        queue_size = self.q.qsize() if hasattr(self.q, 'qsize') else 0
-        queue_maxsize = getattr(self.q, 'maxsize', 0)
-        queue_utilization = (queue_size / queue_maxsize) if queue_maxsize > 0 else 0.0
-        
-        stream_metrics = {
-            'queue_size': queue_size,
-            'queue_maxsize': queue_maxsize,
-            'queue_utilization_percent': queue_utilization * 100,
-            'emergency_expansions': self.emergency_expansions,
-            'reconnection_attempts': self.reconnection_attempts
-        }
-        
-        # Combine with existing metrics
-        current_metrics.update(stream_metrics)
-        
-        # Add buffer health if available
-        if self.enable_adaptive_management:
-            try:
-                buffer_health = self.get_buffer_health()
-                if buffer_health:
-                    current_metrics.update({
-                        'buffer_health_status': buffer_health.status.value,
-                        'buffer_utilization': buffer_health.utilization,
-                        'buffer_overflow_risk': buffer_health.overflow_risk
-                    })
-            except Exception as e:
-                logger.debug("Error getting buffer health for metrics: %s", e)
-        
-        return current_metrics
     
     def __enter__(self):
         """Enhanced context manager entry with error handling."""

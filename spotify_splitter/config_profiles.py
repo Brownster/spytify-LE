@@ -8,14 +8,13 @@ detection and profile selection.
 
 import logging
 import os
-import platform
 import psutil
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, Optional
 import subprocess
 
-from .buffer_management import BufferStrategy, AudioSettings
+from .buffer_management import BufferStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,6 @@ class ConfigProfile:
     enable_debug_mode: bool
     enable_adaptive_management: bool
     enable_health_monitoring: bool
-    enable_metrics_collection: bool
     max_reconnection_attempts: int
     
     def to_dict(self) -> Dict[str, Any]:
@@ -75,7 +73,6 @@ class ConfigProfile:
             'enable_debug_mode': self.enable_debug_mode,
             'enable_adaptive_management': self.enable_adaptive_management,
             'enable_health_monitoring': self.enable_health_monitoring,
-            'enable_metrics_collection': self.enable_metrics_collection,
             'max_reconnection_attempts': self.max_reconnection_attempts
         }
 
@@ -200,7 +197,6 @@ class ProfileManager:
             enable_debug_mode=False,
             enable_adaptive_management=True,
             enable_health_monitoring=True,
-            enable_metrics_collection=True,
             max_reconnection_attempts=10
         ),
         
@@ -215,7 +211,6 @@ class ProfileManager:
             enable_debug_mode=False,
             enable_adaptive_management=True,
             enable_health_monitoring=True,
-            enable_metrics_collection=True,
             max_reconnection_attempts=5
         ),
         
@@ -230,7 +225,6 @@ class ProfileManager:
             enable_debug_mode=True,
             enable_adaptive_management=True,
             enable_health_monitoring=True,
-            enable_metrics_collection=True,
             max_reconnection_attempts=3
         )
     }
@@ -320,7 +314,6 @@ class ProfileManager:
             enable_debug_mode=base_profile.enable_debug_mode,
             enable_adaptive_management=base_profile.enable_adaptive_management,
             enable_health_monitoring=base_profile.enable_health_monitoring,
-            enable_metrics_collection=base_profile.enable_metrics_collection,
             max_reconnection_attempts=base_profile.max_reconnection_attempts
         )
         
@@ -419,7 +412,6 @@ class ProfileManager:
             enable_debug_mode=overrides.get('enable_debug_mode', base.enable_debug_mode),
             enable_adaptive_management=overrides.get('enable_adaptive_management', base.enable_adaptive_management),
             enable_health_monitoring=overrides.get('enable_health_monitoring', base.enable_health_monitoring),
-            enable_metrics_collection=overrides.get('enable_metrics_collection', base.enable_metrics_collection),
             max_reconnection_attempts=overrides.get('max_reconnection_attempts', base.max_reconnection_attempts)
         )
         

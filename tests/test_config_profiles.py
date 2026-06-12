@@ -50,7 +50,6 @@ class TestConfigProfile:
             enable_debug_mode=False,
             enable_adaptive_management=True,
             enable_health_monitoring=True,
-            enable_metrics_collection=True,
             max_reconnection_attempts=5
         )
         
@@ -72,7 +71,6 @@ class TestConfigProfile:
             enable_debug_mode=True,
             enable_adaptive_management=True,
             enable_health_monitoring=True,
-            enable_metrics_collection=True,
             max_reconnection_attempts=3
         )
         

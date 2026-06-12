@@ -2,23 +2,15 @@
 Tests for the error recovery management system.
 
 This module tests automatic error recovery, stream reconnection,
-device change detection, and comprehensive error diagnostics.
+and comprehensive error diagnostics.
 """
 
 import pytest
-import time
-import threading
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch, MagicMock
-from queue import Queue, Full
+from unittest.mock import Mock, patch
 
 from spotify_splitter.error_recovery import (
     ErrorRecoveryManager,
     RecoveryAction,
-    ErrorSeverity,
-    ErrorEvent,
-    DeviceInfo,
-    ErrorDiagnostics
 )
 
 
@@ -50,11 +42,6 @@ class TestErrorRecoveryManager:
             error_history_size=50
         )
     
-    def teardown_method(self):
-        """Clean up after tests."""
-        if hasattr(self.manager, 'device_monitoring_enabled') and self.manager.device_monitoring_enabled:
-            self.manager.stop_device_monitoring()
-    
     def test_initialization(self):
         """Test ErrorRecoveryManager initialization."""
         assert self.manager.max_retries == 3
@@ -62,7 +49,6 @@ class TestErrorRecoveryManager:
         assert self.manager.max_backoff == 10.0
         assert len(self.manager.error_history) == 0
         assert len(self.manager.error_counts) == 0
-        assert not self.manager.device_monitoring_enabled
     
     def test_error_classification(self):
         """Test error severity classification."""
@@ -306,206 +292,12 @@ class TestErrorRecoveryManager:
         assert "configuration" in stats
         assert stats["configuration"]["max_retries"] == 3
 
-
-class TestDeviceChangeDetection:
-    """Test cases for device change detection functionality."""
-    
-    def setup_method(self):
-        """Set up test fixtures."""
-        self.manager = ErrorRecoveryManager()
-    
-    def teardown_method(self):
-        """Clean up after tests."""
-        if self.manager.device_monitoring_enabled:
-            self.manager.stop_device_monitoring()
-    
-    @patch('spotify_splitter.error_recovery.sd.query_devices')
-    def test_get_available_devices(self, mock_query):
-        """Test getting available audio devices."""
-        # Mock device list
-        mock_devices = [
-            {'name': 'Device 1', 'max_input_channels': 2, 'default_samplerate': 44100},
-            {'name': 'Device 2', 'max_input_channels': 0, 'default_samplerate': 48000},  # Output only
-            {'name': 'Device 3', 'max_input_channels': 1, 'default_samplerate': 22050},
-        ]
-        mock_query.return_value = mock_devices
-        
-        devices = self.manager.get_available_devices()
-        
-        # Should only return input devices (max_input_channels > 0)
-        assert len(devices) == 2
-        assert devices[0].name == 'Device 1'
-        assert devices[0].channels == 2
-        assert devices[0].samplerate == 44100
-        assert devices[1].name == 'Device 3'
-        assert devices[1].channels == 1
-    
-    @patch('spotify_splitter.error_recovery.sd.query_devices')
-    def test_find_device_by_name(self, mock_query):
-        """Test finding devices by name."""
-        mock_devices = [
-            {'name': 'USB Audio Device', 'max_input_channels': 2, 'default_samplerate': 44100},
-            {'name': 'Built-in Microphone', 'max_input_channels': 1, 'default_samplerate': 48000},
-        ]
-        mock_query.return_value = mock_devices
-        
-        # Test exact match
-        device = self.manager.find_device_by_name('USB Audio Device')
-        assert device is not None
-        assert device.name == 'USB Audio Device'
-        
-        # Test partial match
-        device = self.manager.find_device_by_name('USB')
-        assert device is not None
-        assert device.name == 'USB Audio Device'
-        
-        # Test no match
-        device = self.manager.find_device_by_name('Nonexistent Device')
-        assert device is None
-    
-    @patch('spotify_splitter.error_recovery.sd.query_devices')
-    def test_device_monitoring_start_stop(self, mock_query):
-        """Test starting and stopping device monitoring."""
-        mock_query.return_value = []
-        
-        # Start monitoring
-        assert not self.manager.device_monitoring_enabled
-        self.manager.start_device_monitoring()
-        assert self.manager.device_monitoring_enabled
-        assert self.manager._device_monitor_thread is not None
-        assert self.manager._device_monitor_thread.is_alive()
-        
-        # Stop monitoring
-        self.manager.stop_device_monitoring()
-        assert not self.manager.device_monitoring_enabled
-        
-        # Wait a moment for thread to stop
-        time.sleep(0.1)
-        assert not self.manager._device_monitor_thread.is_alive()
-    
-    def test_device_change_callbacks(self):
-        """Test device change callback registration and removal."""
-        callback1 = Mock()
-        callback2 = Mock()
-        
-        # Add callbacks
-        self.manager.add_device_change_callback(callback1)
-        self.manager.add_device_change_callback(callback2)
-        assert len(self.manager.device_change_callbacks) == 2
-        
-        # Remove callback
-        self.manager.remove_device_change_callback(callback1)
-        assert len(self.manager.device_change_callbacks) == 1
-        assert callback2 in self.manager.device_change_callbacks
-        assert callback1 not in self.manager.device_change_callbacks
-    
-    @patch('spotify_splitter.error_recovery.sd.query_devices')
-    def test_device_change_detection(self, mock_query):
-        """Test detection of device changes."""
-        callback = Mock()
-        self.manager.add_device_change_callback(callback)
-        
-        # Initial device list
-        initial_devices = [
-            {'name': 'Device 1', 'max_input_channels': 2, 'default_samplerate': 44100},
-        ]
-        mock_query.return_value = initial_devices
-        
-        # Initialize device list
-        self.manager._update_device_list()
-        assert len(self.manager.current_devices) == 1
-        
-        # Simulate device addition
-        updated_devices = [
-            {'name': 'Device 1', 'max_input_channels': 2, 'default_samplerate': 44100},
-            {'name': 'Device 2', 'max_input_channels': 1, 'default_samplerate': 48000},
-        ]
-        mock_query.return_value = updated_devices
-        
-        # Check for changes
-        self.manager._check_device_changes()
-        
-        # Callback should be called with added device
-        callback.assert_called_once()
-        added_devices, removed_devices = callback.call_args[0]
-        assert len(added_devices) == 1
-        assert len(removed_devices) == 0
-        assert added_devices[0].name == 'Device 2'
-    
-    @patch('spotify_splitter.error_recovery.sd.query_devices')
-    def test_device_removal_detection(self, mock_query):
-        """Test detection of device removal."""
-        callback = Mock()
-        self.manager.add_device_change_callback(callback)
-        
-        # Initial device list with two devices
-        initial_devices = [
-            {'name': 'Device 1', 'max_input_channels': 2, 'default_samplerate': 44100},
-            {'name': 'Device 2', 'max_input_channels': 1, 'default_samplerate': 48000},
-        ]
-        mock_query.return_value = initial_devices
-        self.manager._update_device_list()
-        
-        # Simulate device removal
-        updated_devices = [
-            {'name': 'Device 1', 'max_input_channels': 2, 'default_samplerate': 44100},
-        ]
-        mock_query.return_value = updated_devices
-        
-        # Check for changes
-        self.manager._check_device_changes()
-        
-        # Callback should be called with removed device
-        callback.assert_called_once()
-        added_devices, removed_devices = callback.call_args[0]
-        assert len(added_devices) == 0
-        assert len(removed_devices) == 1
-        assert removed_devices[0].name == 'Device 2'
-    
-    @patch('spotify_splitter.error_recovery.sd.query_devices')
-    def test_device_monitoring_error_handling(self, mock_query):
-        """Test error handling in device monitoring."""
-        # Make query_devices raise an exception
-        mock_query.side_effect = Exception("Device query failed")
-        
-        # This should not raise an exception
-        devices = self.manager.get_available_devices()
-        assert devices == []  # Should return empty list on error
-        
-        # Device change checking should also handle errors gracefully
-        self.manager._check_device_changes()  # Should not raise exception
-    
-    def test_callback_error_handling(self):
-        """Test error handling in device change callbacks."""
-        # Add a callback that raises an exception
-        bad_callback = Mock(side_effect=Exception("Callback error"))
-        good_callback = Mock()
-        
-        self.manager.add_device_change_callback(bad_callback)
-        self.manager.add_device_change_callback(good_callback)
-        
-        # Notify callbacks - should handle the exception gracefully
-        added = [DeviceInfo(0, "Test Device", 2, 44100)]
-        removed = []
-        
-        self.manager._notify_device_change_callbacks(added, removed)
-        
-        # Both callbacks should be called despite the error in the first one
-        bad_callback.assert_called_once_with(added, removed)
-        good_callback.assert_called_once_with(added, removed)
-
-
 class TestErrorRecoveryIntegration:
     """Integration tests for error recovery with audio components."""
     
     def setup_method(self):
         """Set up test fixtures."""
         self.manager = ErrorRecoveryManager()
-    
-    def teardown_method(self):
-        """Clean up after tests."""
-        if hasattr(self.manager, 'device_monitoring_enabled') and self.manager.device_monitoring_enabled:
-            self.manager.stop_device_monitoring()
     
     def test_buffer_overflow_recovery(self):
         """Test recovery from buffer overflow scenarios."""
