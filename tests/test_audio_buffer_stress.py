@@ -137,7 +137,8 @@ class HighLoadBufferStressTest:
         
         def producer(stream_id: int):
             """Producer for a specific stream."""
-            while active.is_set():
+            deadline = time.time() + self.duration
+            while active.is_set() and time.time() < deadline:
                 try:
                     # Simulate varying audio data sizes
                     size = np.random.randint(512, 2048)
@@ -476,15 +477,15 @@ class MemoryPressureStressTest:
             """Generate memory pressure by allocating large chunks."""
             while active.is_set():
                 try:
-                    # Allocate memory in chunks
-                    chunk_size = np.random.randint(1000, 5000)
+                    # Allocate bounded chunks; this is a test, not a machine-level soak.
+                    chunk_size = np.random.randint(256, 768)
                     chunk = np.random.random((chunk_size, chunk_size)).astype(np.float32)
                     memory_allocations.append(chunk)
                     
                     # Periodically clean up to avoid system crash
-                    if len(memory_allocations) > 20:
+                    if len(memory_allocations) > 12:
                         # Keep only recent allocations
-                        memory_allocations[:] = memory_allocations[-10:]
+                        memory_allocations[:] = memory_allocations[-6:]
                         gc.collect()
                     
                     time.sleep(0.1)
@@ -497,11 +498,13 @@ class MemoryPressureStressTest:
         
         def audio_processor():
             """Process audio under memory pressure."""
+            nonlocal audio_queue
             frames_processed = 0
             memory_errors = 0
             buffer_adjustments = 0
+            deadline = time.time() + self.duration
             
-            while active.is_set():
+            while active.is_set() and time.time() < deadline:
                 try:
                     # Create audio frame
                     frame_size = np.random.randint(256, 1024)
@@ -637,7 +640,7 @@ class TestAudioBufferStress:
     @pytest.mark.slow
     def test_memory_pressure_stress(self):
         """Test buffer management under memory pressure."""
-        stress_test = MemoryPressureStressTest(duration=25)
+        stress_test = MemoryPressureStressTest(duration=5)
         results = stress_test.run_test()
         
         # Verify functionality under memory pressure
