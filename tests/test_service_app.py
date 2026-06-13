@@ -169,6 +169,8 @@ def test_render_index_escapes_config_values():
     assert 'data-view="history"' in html
     assert "Run checks again" in html
     assert "fetch('/doctor')" in html
+    assert 'id="overwrite-toggle"' in html
+    assert "Applies next session" in html
 
 
 def test_run_service_defaults_to_localhost_without_browser(monkeypatch):

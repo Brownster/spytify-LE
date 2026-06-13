@@ -225,6 +225,8 @@ def render_index(
     .slider:before {{ content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: 0.2s; }}
     .switch input:checked + .slider {{ background: {p["accent"]}; }}
     .switch input:checked + .slider:before {{ transform: translateX(20px); }}
+    .switch input:disabled + .slider {{ opacity: 0.45; cursor: not-allowed; }}
+    .toggle-row.disabled {{ color: {p["text_muted"]}; }}
 
     /* Recorded tracks table */
     table.history {{ width: 100%; border-collapse: collapse; font-size: 0.9rem; }}
@@ -314,10 +316,10 @@ def render_index(
             <form method="post" action="/stop" style="flex:1;"><button type="submit" class="secondary">■ Stop</button></form>
           </div>
           <form method="post" action="/update" class="toggle-row">
-            <span>Overwrite existing</span>
+            <span>Overwrite existing <small id="overwrite-note" class="help-text"></small></span>
             <label class="switch">
               <input type="hidden" name="allow_overwrite" value="0">
-              <input type="checkbox" name="allow_overwrite" value="on" {checked(config.get("allow_overwrite", False))} onchange="this.form.submit()">
+              <input id="overwrite-toggle" type="checkbox" name="allow_overwrite" value="on" {checked(config.get("allow_overwrite", False))} onchange="this.form.submit()">
               <span class="slider"></span>
             </label>
           </form>
@@ -496,6 +498,14 @@ def render_index(
             startBtn.classList.remove('recording');
             startBtn.disabled = false;
           }}
+        }}
+        const overwriteToggle = document.getElementById('overwrite-toggle');
+        const overwriteNote = document.getElementById('overwrite-note');
+        if (overwriteToggle && overwriteNote) {{
+          const recording = st === 'running' || st === 'paused' || st === 'stopping';
+          overwriteToggle.disabled = recording;
+          overwriteToggle.closest('.toggle-row')?.classList.toggle('disabled', recording);
+          overwriteNote.textContent = recording ? 'Applies next session' : '';
         }}
 
         const track = data.track || {{}};
