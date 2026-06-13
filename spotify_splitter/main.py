@@ -339,6 +339,7 @@ def record(
         "recording_status": "Initializing...",
         "tracks_recorded": 0,
         "buffer_warnings": 0,
+        "dropped_frames": 0,
         # Timer state
         "timer_enabled": False,
         "timer_duration_seconds": 0,
@@ -379,8 +380,7 @@ def record(
             )
             recorder_status.audio = AudioStatus(
                 queue_depth=audio_queue.qsize(),
-                # TODO(Pass 2): populate from real callback drop accounting.
-                dropped_frames=0,
+                dropped_frames=ui_state["dropped_frames"],
                 buffer_warnings=ui_state["buffer_warnings"],
             )
             try:
@@ -463,6 +463,8 @@ def record(
             publish_status("recording")
         elif action == "buffer_warning":
             ui_state["buffer_warnings"] += 1
+            if isinstance(data, dict):
+                ui_state["dropped_frames"] += int(data.get("dropped_frames") or 0)
             publish_status()
 
         elif action == "processing_error" and isinstance(data, dict):
@@ -532,6 +534,7 @@ def record(
     ui_state["current_track"] = None
     ui_state["tracks_recorded"] = 0
     ui_state["buffer_warnings"] = 0
+    ui_state["dropped_frames"] = 0
     engine.set_status_publisher(publish_status)
     engine.configure_post_run_cleanup(tag_output=tag_output)
     publish_status("waiting")

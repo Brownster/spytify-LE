@@ -33,6 +33,7 @@ class AudioStream:
 
         self.q: Queue[np.ndarray] = q or Queue(maxsize=queue_size)
         self.ui_callback = ui_callback
+        self.dropped_frames = 0
 
         def _open(device):
             return sd.InputStream(
@@ -80,9 +81,10 @@ class AudioStream:
         try:
             self.q.put_nowait(indata.copy())
         except Full:
+            self.dropped_frames += frames
             logger.warning("Audio buffer full; dropping frames")
             if self.ui_callback:
-                self.ui_callback("buffer_warning", None)
+                self.ui_callback("buffer_warning", {"dropped_frames": frames})
 
     def __enter__(self):
         self.stream.start()
