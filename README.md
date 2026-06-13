@@ -14,7 +14,8 @@ Record Spotify desktop playback on Linux and save each track as an individual au
 - 📝 **Playlist Support** - Generate M3U playlists with optional bundling
 - 🚫 **Ad Filtering** - Automatically skips advertisements
 - ⏯️ **Smart Controls** - Start, stop, pause, and resume recording from web UI
-- 🔄 **Auto-Recovery** - Robust error handling and automatic restarts
+- 🩺 **Built-in Diagnostics** - `doctor` checks Spotify, ffmpeg, audio server, and output before you record
+- 🔄 **Auto-Restart** - The background service relaunches the recorder if it exits unexpectedly
 - 🔁 **Overwrite Control** - Optional re-recording of existing tracks
 
 ## Prerequisites
@@ -102,7 +103,7 @@ spotify-splitter configure
 spotify-splitter record
 
 # Record with an automatic timer
-spotify-splitter record --duration "4h29m"
+spotify-splitter record --max-duration "4h29m"
 
 # Custom output directory and format
 spotify-splitter --output ~/Music/Spotify --format flac record
@@ -381,46 +382,38 @@ Spotify Desktop Audio Output
            ↓
 PulseAudio/PipeWire Monitor
            ↓
-sounddevice (PortAudio)
+sounddevice (PortAudio) — real-time callback, enqueue only
            ↓
-Adaptive Buffer Management
+Bounded queue → frame-addressed chunk ledger
            ↓
-Track Boundary Detection (MPRIS)
+Track Boundary Detection (MPRIS track changes)
            ↓
-Format Conversion (float32 → int16)
-           ↓
-Audio Segmentation per Track
-           ↓
-ID3 Tagging (Mutagen)
-  ├─ Basic: Artist, Title, Album, Track #
-  ├─ Album Art (from Spotify)
-  └─ LastFM: Year, Genre
-           ↓
-Export (MP3/FLAC/WAV/OGG)
+Completed track → export worker (off the capture thread):
+  ├─ Slice ledger window + float32 → int16
+  ├─ Encode (MP3/FLAC/WAV/OGG, 320k)
+  ├─ ID3 tags: Artist/Title/Album/Track #, Album Art, LastFM Year/Genre
+  └─ Record outcome (saved/skipped/failed) in the track history
 ```
 
 ### Key Features
 
 **Reliability**
-- Incomplete track detection
-- Advertisement filtering
-- Duplicate detection
-- Automatic error recovery
-- Graceful degradation
+- Incomplete-track detection (skips partially captured tracks)
+- Advertisement / non-track filtering
+- Duplicate detection (skips files that already exist)
+- Bounded transient-error retry on export
+- Graceful shutdown that flushes the in-progress track
 
 **Performance**
-- Adaptive buffer sizing
-- Non-blocking threaded processing
-- Memory-efficient streaming
-- Dynamic latency adjustment
-- Real-time performance monitoring
+- Off-thread export worker — encoding, tagging, and LastFM/artwork never block capture
+- Frame-addressed chunk ledger — no growing in-memory audio buffer
+- Dropped-frame accounting surfaced in the UI
 
 **Production Ready**
-- Comprehensive test suite
-- Type-hinted codebase
-- Modular architecture
-- Extensive logging
-- Web-based monitoring
+- Focused test suite (~230 tests)
+- Type-hinted, modular codebase
+- Structured status + per-track history channels
+- Built-in `doctor` diagnostics
 
 ## Contributing
 
