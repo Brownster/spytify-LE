@@ -20,6 +20,7 @@ from spotify_splitter.config_profiles import ProfileManager, ProfileType, System
 from spotify_splitter.engine import TimerSnapshot, TimerTick
 from spotify_splitter.mpris import TrackInfo
 from spotify_splitter.recorder_status import AtomicStatusWriter
+from spotify_splitter.user_config import DEFAULT_CONFIG, save_user_config
 from spotify_splitter.util import StreamInfo
 from typer.testing import CliRunner
 
@@ -466,10 +467,10 @@ class TestMainIntegration:
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
-    def test_tagger_called_on_shutdown(
+    def test_tagger_not_called_without_configured_url(
         self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info, mock_tag_output
     ):
-        """Ensure tagging API is invoked when recording stops."""
+        """Ensure external tagger is skipped unless explicitly configured."""
         mock_get_stream_info.return_value = self.mock_stream_info
 
         mock_stream_instance = Mock()
@@ -495,18 +496,21 @@ class TestMainIntegration:
         ])
 
         assert result.exit_code == 0
-        mock_tag_output.assert_called_once_with(Path(self.temp_dir), None)
+        mock_tag_output.assert_not_called()
 
     @patch('spotify_splitter.main.tag_output')
     @patch('spotify_splitter.main.get_spotify_stream_info')
     @patch('spotify_splitter.main.track_events')
     @patch('spotify_splitter.main.AudioStream')
     @patch('spotify_splitter.main.SegmentManager')
-    def test_tagger_called_with_playlist(
+    def test_configured_tagger_called_with_playlist(
         self, mock_segment_manager, mock_audio_stream, mock_track_events, mock_get_stream_info, mock_tag_output
     ):
-        """Ensure tagging API receives playlist when playlist option is used."""
+        """Ensure configured tagging API receives playlist when playlist option is used."""
         mock_get_stream_info.return_value = self.mock_stream_info
+        config = DEFAULT_CONFIG.copy()
+        config["external_tagger_url"] = "http://tagger.local:5000"
+        save_user_config(config)
 
         mock_stream_instance = Mock()
         mock_audio_stream.return_value = mock_stream_instance
@@ -533,7 +537,11 @@ class TestMainIntegration:
         ])
 
         assert result.exit_code == 0
-        mock_tag_output.assert_called_once_with(Path(self.temp_dir), playlist_path)
+        mock_tag_output.assert_called_once_with(
+            Path(self.temp_dir),
+            playlist_path,
+            base_url="http://tagger.local:5000",
+        )
     
     def test_profiles_command(self):
         """Test the profiles command functionality."""

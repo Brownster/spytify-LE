@@ -53,12 +53,12 @@ def merge_web_config(config: Dict[str, Any], form: Dict[str, list]) -> Dict[str,
     # Empty string clears these to None; for the rest, empty falls back to existing.
     nullable_text = {
         "playlist", "bundle_album_art_uri", "playlist_base_path",
-        "max_duration", "lastfm_api_key",
+        "max_duration", "lastfm_api_key", "external_tagger_url",
     }
     text_fields = [
         "output", "format", "player", "profile",
         "playlist", "bundle_album_art_uri", "playlist_base_path",
-        "max_duration", "lastfm_api_key",
+        "max_duration", "lastfm_api_key", "external_tagger_url",
     ]
     for key in text_fields:
         if key in form:

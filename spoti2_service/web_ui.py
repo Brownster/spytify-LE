@@ -372,6 +372,11 @@ def render_index(
             <input type="text" name="lastfm_api_key" value="{attr(config.get("lastfm_api_key", "") or "")}" placeholder="Enter your LastFM API key" />
             <div class="help-text">Required for year and genre tags. <a href="https://www.last.fm/api/account/create" target="_blank" style="color:{p["accent"]};">Get one here</a></div>
           </label>
+          <label>
+            <span>External Tagger URL (optional)</span>
+            <input type="text" name="external_tagger_url" value="{attr(config.get("external_tagger_url", "") or "")}" placeholder="http://localhost:5000" />
+            <div class="help-text">Only used if you run a separate tagging API service</div>
+          </label>
         </div>
 
         <h2 style="margin-top:2rem;">Playlist</h2>

@@ -22,12 +22,14 @@ def test_merge_web_config_partial_form_preserves_other_fields():
         "output": "/music",
         "format": "flac",
         "lastfm_api_key": "KEY123",
+        "external_tagger_url": "http://tagger.local:5000",
         "allow_overwrite": True,
         "playlist": "/p.m3u",
     }
     merged = merge_web_config(config, {"max_duration": ["90m"]})
     assert merged["max_duration"] == "90m"
     assert merged["lastfm_api_key"] == "KEY123"
+    assert merged["external_tagger_url"] == "http://tagger.local:5000"
     assert merged["allow_overwrite"] is True
     assert merged["format"] == "flac"
     assert merged["playlist"] == "/p.m3u"
@@ -47,10 +49,16 @@ def test_merge_web_config_checkbox_toggle():
 def test_merge_web_config_clears_nullable_text():
     """Empty nullable text clears to None; omitted text is preserved."""
     merged = merge_web_config(
-        {"lastfm_api_key": "KEY", "playlist": "/old.m3u", "output": "/music"},
-        {"lastfm_api_key": [""], "playlist": [""]},
+        {
+            "lastfm_api_key": "KEY",
+            "external_tagger_url": "http://tagger.local:5000",
+            "playlist": "/old.m3u",
+            "output": "/music",
+        },
+        {"lastfm_api_key": [""], "external_tagger_url": [""], "playlist": [""]},
     )
     assert merged["lastfm_api_key"] is None
+    assert merged["external_tagger_url"] is None
     assert merged["playlist"] is None
     assert merged["output"] == "/music"
 
@@ -144,6 +152,7 @@ def test_render_index_escapes_config_values():
     config = DEFAULT_CONFIG.copy()
     config["output"] = '"/tmp/music"'
     config["lastfm_api_key"] = '<script>alert("x")</script>'
+    config["external_tagger_url"] = "http://tagger.local:5000"
     status = {"state": "running", "details": "<b>recording</b>"}
 
     html = render_index(config, status)
@@ -152,6 +161,7 @@ def test_render_index_escapes_config_values():
     # Config values are server-rendered into attributes and must be escaped.
     assert '&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;' in html
     assert '&quot;/tmp/music&quot;' in html
+    assert 'value="http://tagger.local:5000"' in html
     # Live state/details are populated client-side via textContent, not server HTML.
     assert "<b>recording</b>" not in html
     assert 'id="doctor-pill"' in html

@@ -21,6 +21,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "blocksize": None,
     "latency": None,
     "lastfm_api_key": None,  # LastFM API key for metadata fetching
+    "external_tagger_url": None,  # Optional external tagging API base URL
     "allow_overwrite": False,  # Allow overwriting existing track files
 }
 
@@ -86,4 +87,3 @@ def apply_cli_overrides(
         if value is not None:
             result[key] = value
     return result
-

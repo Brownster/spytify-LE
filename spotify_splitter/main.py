@@ -304,6 +304,7 @@ def record(
     # Get allow_overwrite and lastfm_api_key from config
     allow_overwrite = config.get("allow_overwrite", False)
     lastfm_api_key = config.get("lastfm_api_key")
+    external_tagger_url = config.get("external_tagger_url")
 
     try:
         engine_config = RecorderEngineConfig(
@@ -536,7 +537,14 @@ def record(
     ui_state["buffer_warnings"] = 0
     ui_state["dropped_frames"] = 0
     engine.set_status_publisher(publish_status)
-    engine.configure_post_run_cleanup(tag_output=tag_output)
+    if external_tagger_url:
+        engine.configure_post_run_cleanup(
+            tag_output=lambda output_dir, playlist_path: tag_output(
+                output_dir,
+                playlist_path,
+                base_url=external_tagger_url,
+            )
+        )
     publish_status("waiting")
 
     def graceful_shutdown() -> None:
