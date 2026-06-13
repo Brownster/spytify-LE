@@ -1,41 +1,61 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -Eeuo pipefail
 
-echo "🎵 Spotify Splitter Installation"
-echo "================================"
+readonly REPO_URL="git+https://github.com/Brownster/spytify-LE.git"
 
-# Check if we're on Linux
-if [[ "$OSTYPE" != "linux-gnu"* ]]; then
-    echo "❌ This tool only works on Linux"
+fct_install_system_deps() {
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update
+    sudo apt-get install -y pipx python3-gi gir1.2-glib-2.0 libportaudio2 ffmpeg
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y pipx python3-gobject portaudio ffmpeg
+  elif command -v pacman >/dev/null 2>&1; then
+    sudo pacman -S --needed python-pipx python-gobject portaudio ffmpeg
+  else
+    printf '%s\n' "Unsupported package manager."
+    printf '%s\n' "Install pipx, PyGObject/python3-gi, PortAudio, and ffmpeg manually."
+  fi
+}
+
+fct_install_app() {
+  if ! command -v pipx >/dev/null 2>&1; then
+    printf '%s\n' "pipx was not found after installing dependencies."
+    printf '%s\n' "Install pipx, then rerun this script."
     exit 1
-fi
+  fi
 
-# Install system dependencies
-echo "📦 Installing system dependencies..."
-if command -v apt &> /dev/null; then
-    sudo apt update
-    sudo apt install -y python3-pip python3-pyaudio ffmpeg
-elif command -v dnf &> /dev/null; then
-    sudo dnf install -y python3-pip python3-pyaudio ffmpeg
-elif command -v pacman &> /dev/null; then
-    sudo pacman -S python-pip python-pyaudio ffmpeg
-else
-    echo "⚠️  Please install python3-pip, python3-pyaudio, and ffmpeg manually"
-fi
+  pipx ensurepath
 
-# Install spotify-splitter
-echo "🔧 Installing spotify-splitter..."
-if [ -f "spotify_splitter-0.1.0-py3-none-any.whl" ]; then
-    pip install --user spotify_splitter-0.1.0-py3-none-any.whl
-else
-    pip install --user spotify-splitter
-fi
+  if [[ -f "pyproject.toml" && -d "spotify_splitter" ]]; then
+    pipx install --force --system-site-packages .
+  else
+    pipx install --force --system-site-packages "${REPO_URL}"
+  fi
+}
 
-echo ""
-echo "✅ Installation complete!"
-echo ""
-echo "📋 Usage:"
-echo "  spotify-splitter --output ~/Music record"
-echo "  spotify-splitter record --spotifyd-mode  # For headless usage"
-echo ""
-echo "📚 For more information: https://github.com/Brownster/spoti2"
+fct_print_next_steps() {
+  cat <<'EOF'
+
+Installation complete.
+
+If this is a new shell, restart it or run:
+  export PATH="$HOME/.local/bin:$PATH"
+
+Then run:
+  spotify-splitter doctor
+  spotify-splitter web
+EOF
+}
+
+fct_main() {
+  if [[ "${OSTYPE:-}" != linux* ]]; then
+    printf '%s\n' "spotify-splitter only supports Linux."
+    exit 1
+  fi
+
+  fct_install_system_deps
+  fct_install_app
+  fct_print_next_steps
+}
+
+fct_main "$@"

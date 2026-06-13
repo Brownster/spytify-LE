@@ -23,41 +23,42 @@ Record Spotify desktop playback on Linux and save each track as an individual au
 - Linux with PulseAudio or PipeWire
 - Spotify desktop client (tested with [Flatpak version](https://flathub.org/apps/com.spotify.Client))
 - Python 3.10– <4.0
-- System packages: `python3-pyaudio` and `ffmpeg`
+- System packages: `pipx`, PyGObject/`python3-gi`, PortAudio, and `ffmpeg`
 - **LastFM API key** (free) - [Get one here](https://www.last.fm/api/account/create)
-
-**For source installation:**
-- [Poetry](https://python-poetry.org/) installed
 
 ## Installation
 
-### Option 1: Install from Release (Recommended)
+### Recommended: pipx
 
-Download the latest `.whl` file from [GitHub Releases](https://github.com/Brownster/spytify-LE/releases):
-
-```bash
-# Install system dependencies
-sudo apt install python3-pip python3-pyaudio ffmpeg  # Ubuntu/Debian
-# OR
-sudo dnf install python3-pip python3-pyaudio ffmpeg  # Fedora
-
-# Install spotify-splitter
-pip install --user spotify_splitter-0.1.0-py3-none-any.whl
-
-# Add to PATH if needed
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
-source ~/.bashrc
-```
-
-### Option 2: Install from Source
+Ubuntu/Debian:
 
 ```bash
-git clone https://github.com/Brownster/spytify-LE.git
-cd spytify-LE
-sudo apt install python3-pyaudio ffmpeg
-poetry config virtualenvs.options.system-site-packages true
-poetry install
+sudo apt-get update
+sudo apt-get install -y pipx python3-gi gir1.2-glib-2.0 libportaudio2 ffmpeg
+pipx ensurepath
+pipx install --system-site-packages 'git+https://github.com/Brownster/spytify-LE.git'
 ```
+
+Fedora:
+
+```bash
+sudo dnf install -y pipx python3-gobject portaudio ffmpeg
+pipx ensurepath
+pipx install --system-site-packages 'git+https://github.com/Brownster/spytify-LE.git'
+```
+
+Arch:
+
+```bash
+sudo pacman -S --needed python-pipx python-gobject portaudio ffmpeg
+pipx ensurepath
+pipx install --system-site-packages 'git+https://github.com/Brownster/spytify-LE.git'
+```
+
+`--system-site-packages` is intentional: the app needs your distro's PyGObject
+bindings for MPRIS/D-Bus.
+
+From a cloned checkout, you can also run `./install.sh`.
 
 ## Quick Start
 
