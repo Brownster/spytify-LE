@@ -194,6 +194,17 @@ spotify-splitter record --queue-size 50 --latency 0.1
 spotify-splitter record --blocksize 4096
 ```
 
+### Optional External Tagger
+
+Spoti2 already writes track metadata itself. If you run a separate tagging API,
+configure it explicitly; otherwise no localhost tagger call is made:
+
+```json
+{
+  "external_tagger_url": "http://localhost:5000"
+}
+```
+
 ## Web UI Features
 
 The modern web interface provides:
@@ -212,13 +223,13 @@ The modern web interface provides:
 - **Audio format selection** - MP3, FLAC, WAV, OGG
 - **Overwrite existing files** - Toggle to re-record tracks that already exist (useful for fixing incomplete recordings)
 - **LastFM API key management** - Required for year and genre metadata
+- **External tagger URL** - Optional; only needed if you run a separate tagging API
 - **Playlist generation options** - Create M3U playlists with optional bundling
 
 ### Advanced Tab
 - **Performance profile selection** - Auto, desktop, headless, high_performance
-- **Buffer management settings** - Adaptive buffers and debug-only monitoring
+- **Buffer settings** - Queue size, blocksize, and latency for unusual audio setups
 - **Player name configuration** - MPRIS player selection
-- **Debug options** - Hidden behind an expandable advanced section
 
 ## Service Mode & Systemd Integration
 
