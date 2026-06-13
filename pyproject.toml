@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "spotify-splitter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Record Spotify playback and split tracks with metadata"
 authors = ["Marc Brown <marcsmobile.brown@gmail.com>"]
 readme = "README.md"
