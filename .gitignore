@@ -3,3 +3,8 @@ __pycache__/
 .env
 .venv/
 .venv-live/
+
+# Build artifacts
+/dist/
+/build/
+*.egg-info/
