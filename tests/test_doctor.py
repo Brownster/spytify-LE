@@ -21,6 +21,10 @@ def ok_command(command, timeout):
     )
 
 
+def ok_mpris():
+    return None
+
+
 def test_doctor_reports_ready_when_dependencies_and_stream_exist(monkeypatch, tmp_path):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     output_dir = tmp_path / "Music"
@@ -32,6 +36,7 @@ def test_doctor_reports_ready_when_dependencies_and_stream_exist(monkeypatch, tm
         process_iter=lambda: [FakeProcess()],
         stream_probe=lambda: StreamInfo("spotify.monitor", 48000, 2),
         run_command=ok_command,
+        mpris_probe=ok_mpris,
     )
 
     assert report.ok is True
@@ -52,6 +57,7 @@ def test_doctor_spotify_running_without_stream_is_actionable(monkeypatch, tmp_pa
         process_iter=lambda: [FakeProcess()],
         stream_probe=no_stream,
         run_command=ok_command,
+        mpris_probe=ok_mpris,
     )
 
     checks = {check.id: check for check in report.checks}
@@ -70,6 +76,7 @@ def test_doctor_spotify_missing_is_actionable(monkeypatch, tmp_path):
         process_iter=lambda: [],
         stream_probe=lambda: StreamInfo("spotify.monitor", 44100, 2),
         run_command=ok_command,
+        mpris_probe=ok_mpris,
     )
 
     spotify = {check.id: check for check in report.checks}["spotify_process"]
@@ -90,12 +97,33 @@ def test_doctor_reports_missing_ffmpeg(monkeypatch, tmp_path):
         process_iter=lambda: [FakeProcess()],
         stream_probe=lambda: StreamInfo("spotify.monitor", 44100, 2),
         run_command=ok_command,
+        mpris_probe=ok_mpris,
     )
 
     ffmpeg = {check.id: check for check in report.checks}["ffmpeg"]
     assert report.ok is False
     assert ffmpeg.status == "error"
     assert ffmpeg.message == "ffmpeg is missing"
+    assert "apt-get install ffmpeg" in ffmpeg.action
+    assert "dnf install ffmpeg" in ffmpeg.action
+    assert "pacman -S ffmpeg" in ffmpeg.action
+
+
+def test_doctor_reports_missing_mpris_bindings(monkeypatch, tmp_path):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr("spotify_splitter.doctor.shutil.which", lambda name: f"/usr/bin/{name}")
+
+    report = run_doctor(
+        process_iter=lambda: [FakeProcess()],
+        stream_probe=lambda: StreamInfo("spotify.monitor", 44100, 2),
+        run_command=ok_command,
+        mpris_probe=lambda: (_ for _ in ()).throw(ImportError("No module named gi")),
+    )
+
+    mpris = {check.id: check for check in report.checks}["mpris_bindings"]
+    assert report.ok is False
+    assert mpris.status == "error"
+    assert "python3-gi" in mpris.action
 
 
 def test_doctor_warns_for_missing_pipewire_tools(monkeypatch, tmp_path):
@@ -110,6 +138,7 @@ def test_doctor_warns_for_missing_pipewire_tools(monkeypatch, tmp_path):
         process_iter=lambda: [FakeProcess()],
         stream_probe=lambda: StreamInfo("spotify.monitor", 44100, 2),
         run_command=ok_command,
+        mpris_probe=ok_mpris,
     )
 
     pipewire = {check.id: check for check in report.checks}["pipewire_tools"]

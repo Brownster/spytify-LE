@@ -164,8 +164,27 @@ def _check_ffmpeg() -> DoctorCheck:
         "ffmpeg",
         "error",
         "ffmpeg is missing",
-        "Install ffmpeg, for example: sudo apt install ffmpeg",
+        "Install ffmpeg: sudo apt-get install ffmpeg; sudo dnf install ffmpeg; sudo pacman -S ffmpeg.",
     )
+
+
+def _import_mpris_bindings() -> None:
+    from gi.repository import GLib  # noqa: F401
+    from pydbus import SessionBus  # noqa: F401
+
+
+def _check_mpris_bindings(import_probe: Callable[[], None] = _import_mpris_bindings) -> DoctorCheck:
+    try:
+        import_probe()
+    except Exception as e:
+        return DoctorCheck(
+            "mpris_bindings",
+            "MPRIS Python bindings",
+            "error",
+            f"Python MPRIS bindings are missing: {e}",
+            "Install PyGObject: sudo apt-get install python3-gi gir1.2-glib-2.0; sudo dnf install python3-gobject; sudo pacman -S python-gobject.",
+        )
+    return DoctorCheck("mpris_bindings", "MPRIS Python bindings", "ok", "PyGObject and pydbus are importable")
 
 
 def _check_pactl(
@@ -177,7 +196,7 @@ def _check_pactl(
             "PulseAudio/PipeWire",
             "error",
             "pactl is missing",
-            "Install PulseAudio/PipeWire tools, for example: sudo apt install pulseaudio-utils",
+            "Install audio tools: sudo apt-get install pulseaudio-utils; sudo dnf install pulseaudio-utils; sudo pacman -S libpulse.",
         )
     try:
         result = run_command(["pactl", "info"], 3.0)
@@ -219,7 +238,7 @@ def _check_pipewire_tools() -> DoctorCheck:
         "PipeWire tools",
         "warning",
         "pw-dump is missing; Spotify Flatpak detection may be less reliable",
-        "Install PipeWire tools if Spotify is installed as a Flatpak.",
+        "Install PipeWire tools if using Spotify Flatpak: sudo apt-get install pipewire-bin; sudo dnf install pipewire-utils; sudo pacman -S pipewire.",
     )
 
 
@@ -273,6 +292,7 @@ def run_doctor(
     process_iter: Optional[Callable[[], Iterable[Any]]] = None,
     stream_probe: Callable[[], StreamInfo] = get_spotify_stream_info,
     run_command: Callable[[List[str], float], subprocess.CompletedProcess[str]] = _run_command,
+    mpris_probe: Callable[[], None] = _import_mpris_bindings,
 ) -> DoctorReport:
     """Run first-use diagnostics without mutating recorder state."""
     config = load_user_config(config_path)
@@ -280,6 +300,7 @@ def run_doctor(
         _check_config(config_path),
         _check_output_dir(config),
         _check_ffmpeg(),
+        _check_mpris_bindings(mpris_probe),
         _check_pactl(run_command),
         _check_pipewire_tools(),
     ]

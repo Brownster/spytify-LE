@@ -18,14 +18,25 @@ jobs:
       TAG: v${{ github.event.inputs.version }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Build project & create wheel
+      - uses: astral-sh/setup-uv@v5
+      - name: Build project
         run: |
-          python -m pip install --upgrade pip
-          pip install poetry
-          poetry build
+          uv build
+      - name: Verify wheel contains web service
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import zipfile
+
+          wheel = next(Path("dist").glob("*.whl"))
+          names = set(zipfile.ZipFile(wheel).namelist())
+          for name in ("spotify_splitter/main.py", "spoti2_service/service_app.py"):
+              if name not in names:
+                  raise SystemExit(f"wheel missing {name}")
+          PY
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
